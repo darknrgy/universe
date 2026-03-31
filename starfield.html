@@ -238,11 +238,11 @@ void main(){
   float h  = fhash(w_seed * 0.7391 + 0.1);
   float br = 0.5 + fhash(w_seed * 0.3947 + 0.9) * 0.5;
   vec3 col;
-  if      (h < 0.05) col = vec3(1.00, 0.28, 0.18);   // M  red giant
-  else if (h < 0.16) col = vec3(1.00, 0.62, 0.25);   // K  orange
-  else if (h < 0.40) col = vec3(1.00, 0.95, 0.70);   // G  yellow
-  else if (h < 0.72) col = vec3(0.97, 0.97, 1.00);   // F/A white
-  else               col = vec3(0.68, 0.82, 1.00);   // B  blue-white
+  if      (h < 0.05) col = vec3(1.00, 0.55, 0.45);   // M  warm reddish
+  else if (h < 0.16) col = vec3(1.00, 0.78, 0.55);   // K  pale orange
+  else if (h < 0.40) col = vec3(1.00, 0.97, 0.85);   // G  warm white
+  else if (h < 0.72) col = vec3(0.98, 0.98, 1.00);   // F/A pure white
+  else               col = vec3(0.82, 0.88, 1.00);   // B  cool white
   vColor = col * br;
 }`;
 
