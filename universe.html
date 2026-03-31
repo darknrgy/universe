@@ -1,0 +1,946 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Universe Simulator</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #000; overflow: hidden; font-family: 'Courier New', monospace; }
+#canvas { display: block; cursor: grab; }
+#canvas:active { cursor: grabbing; }
+#panel {
+  position: fixed; top: 10px; left: 10px; width: 260px;
+  background: rgba(0,10,25,0.88); border: 1px solid #0a3a5a;
+  border-radius: 8px; padding: 12px; color: #7af; font-size: 11px;
+  line-height: 1.9; backdrop-filter: blur(4px);
+  box-shadow: 0 0 20px rgba(0,100,200,0.2);
+}
+#panel h2 { color: #4cf; font-size: 13px; margin-bottom: 8px; letter-spacing: 3px; text-transform: uppercase; }
+.stat-row { display: flex; justify-content: space-between; border-bottom: 1px solid #0a2a3a; padding: 1px 0; }
+.stat-label { color: #49a; }
+.stat-val { color: #af5; font-weight: bold; }
+#events {
+  margin-top: 8px; padding: 6px; background: rgba(0,30,0,0.3);
+  border-left: 2px solid #0a0; font-size: 10px; color: #4d4;
+  min-height: 40px; max-height: 80px; overflow: hidden;
+}
+#hint {
+  position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
+  color: #236; font-size: 10px; letter-spacing: 2px; pointer-events: none;
+}
+#loading {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+  color: #4cf; font-size: 18px; letter-spacing: 4px;
+}
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<div id="loading">INITIALIZING UNIVERSE...</div>
+<div id="panel" style="display:none">
+  <h2>&#x2605; Universe Sim</h2>
+  <div class="stat-row">
+    <span class="stat-label">Particles</span>
+    <select id="n-select" style="background:#001828;color:#af5;border:1px solid #0a3a5a;font-family:inherit;font-size:11px;font-weight:bold;cursor:pointer">
+      <option value="1024">1,024</option>
+      <option value="2048">2,048</option>
+      <option value="4096">4,096</option>
+      <option value="8192">8,192</option>
+      <option value="16384">16,384 (slow)</option>
+    </select>
+  </div>
+  <div class="stat-row"><span class="stat-label">FPS</span><span class="stat-val" id="s-fps">-</span></div>
+  <div class="stat-row"><span class="stat-label">Sim Time</span><span class="stat-val" id="s-time">-</span></div>
+  <div class="stat-row"><span class="stat-label">Kinetic Energy</span><span class="stat-val" id="s-ke">-</span></div>
+  <div class="stat-row"><span class="stat-label">Ang. Momentum</span><span class="stat-val" id="s-am">-</span></div>
+  <div class="stat-row"><span class="stat-label">Clusters</span><span class="stat-val" id="s-clusters">-</span></div>
+  <div class="stat-row"><span class="stat-label">Max Density</span><span class="stat-val" id="s-maxdens">-</span></div>
+  <div class="stat-row"><span class="stat-label">Dispersion</span><span class="stat-val" id="s-spread">-</span></div>
+  <div class="stat-row"><span class="stat-label">Phase</span><span class="stat-val" id="s-phase">Approach</span></div>
+  <div class="stat-row"><span class="stat-label">Galaxy Sep.</span><span class="stat-val" id="s-sep">-</span></div>
+  <div id="events">Initializing simulation...</div>
+</div>
+<div id="hint">L-DRAG rotate &nbsp;|&nbsp; R-DRAG / CTRL+DRAG pan &nbsp;|&nbsp; SCROLL zoom &nbsp;|&nbsp; WASD pan &nbsp;|&nbsp; SPACE pause &nbsp;|&nbsp; R reset</div>
+<script>
+'use strict';
+
+// ============================================================
+// CONFIGURATION
+// ============================================================
+// N can be set via ?n=4096 in the URL
+const N_OPTIONS = { 1024:[32,32], 2048:[64,32], 4096:[64,64], 8192:[128,64], 16384:[128,128] };
+const N         = parseInt(new URLSearchParams(location.search).get('n')) || 8192;
+const [TEX_W, TEX_H] = N_OPTIONS[N] || [128,64];
+const G         = 0.5;    // gravitational constant
+const SOFTENING = 0.4;    // softening length to avoid singularities
+const DT        = 0.018;  // time step
+
+// ============================================================
+// GL SETUP
+// ============================================================
+const canvas = document.getElementById('canvas');
+canvas.width  = window.innerWidth;
+canvas.height = window.innerHeight;
+const gl = canvas.getContext('webgl2', { antialias: false, alpha: false });
+if (!gl) { alert('WebGL2 not supported. Try Chrome or Firefox.'); throw new Error('no webgl2'); }
+
+const extCBF = gl.getExtension('EXT_color_buffer_float');
+if (!extCBF) { alert('EXT_color_buffer_float not supported.'); throw new Error('no float FBO'); }
+
+// ============================================================
+// SHADER SOURCES
+// ============================================================
+
+// --- PHYSICS: fullscreen quad vertex ---
+const physVS = `#version 300 es
+in vec2 aPos;
+void main() { gl_Position = vec4(aPos, 0.0, 1.0); }
+`;
+
+// --- PHYSICS: N-body integration fragment ---
+const physFS = `#version 300 es
+precision highp float;
+precision highp int;
+
+uniform sampler2D uPosTex;
+uniform sampler2D uVelTex;
+uniform float uDt;
+uniform float uG;
+uniform float uSoft;
+
+layout(location=0) out vec4 outPos;
+layout(location=1) out vec4 outVel;
+
+void main() {
+  ivec2 me = ivec2(gl_FragCoord.xy);
+  vec4 posM = texelFetch(uPosTex, me, 0);
+  vec4 velM = texelFetch(uVelTex, me, 0);
+
+  vec3 p = posM.xyz;
+  float myMass = posM.w;
+  vec3 v = velM.xyz;
+  vec3 acc = vec3(0.0);
+  float soft2 = uSoft * uSoft;
+
+  // Sum gravity from all other particles via nested loop over texture
+  for (int y = 0; y < ${TEX_H}; y++) {
+    for (int x = 0; x < ${TEX_W}; x++) {
+      vec4 other = texelFetch(uPosTex, ivec2(x, y), 0);
+      vec3 r = other.xyz - p;
+      float dist2 = dot(r, r) + soft2;
+      float invDist = inversesqrt(dist2);
+      float invDist3 = invDist * invDist * invDist;
+      acc += uG * other.w * invDist3 * r;
+    }
+  }
+
+  // Leapfrog integration
+  v += acc * uDt;
+  p += v * uDt;
+
+  outPos = vec4(p, myMass);
+  outVel = vec4(v, velM.w);
+}
+`;
+
+// --- PARTICLE RENDER vertex ---
+const renderVS = `#version 300 es
+precision highp float;
+precision highp int;
+
+uniform sampler2D uPosTex;
+uniform sampler2D uVelTex;
+uniform mat4 uMVP;
+uniform vec2 uResolution;
+uniform float uPointScale;
+
+out vec3 vColor;
+out float vAlpha;
+
+void main() {
+  int idx = gl_VertexID;
+  ivec2 coord = ivec2(idx % ${TEX_W}, idx / ${TEX_W});
+  vec4 posData = texelFetch(uPosTex, coord, 0);
+  vec4 velData = texelFetch(uVelTex, coord, 0);
+
+  vec3 worldPos = posData.xyz;
+  float mass    = posData.w;
+  vec3 vel      = velData.xyz;
+  float speed   = length(vel);
+
+  gl_Position = uMVP * vec4(worldPos, 1.0);
+
+  // Point size by mass + perspective divide
+  float sz = uPointScale * (mass > 100.0 ? 14.0 : mass > 10.0 ? 5.0 : 1.5 + mass * 0.3);
+  sz /= max(-gl_Position.z * 0.03, 0.5);
+  gl_PointSize = clamp(sz, 0.8, 20.0);
+
+  // Color by speed
+  float t = clamp(speed / 8.0, 0.0, 1.0);
+  vec3 col;
+  if (mass > 100.0) {
+    // Black hole: blazing white-gold core
+    col = vec3(1.0, 0.95, 0.7);
+    vAlpha = 1.0;
+  } else if (mass > 5.0) {
+    // Dark matter: faint blue
+    col = vec3(0.1, 0.2, 0.6);
+    vAlpha = 0.35;
+  } else {
+    // Stars: blue->white->yellow->red by speed
+    if (t < 0.25)      col = mix(vec3(0.15,0.2,1.0),  vec3(0.6,0.8,1.0),  t*4.0);
+    else if (t < 0.5)  col = mix(vec3(0.6,0.8,1.0),   vec3(1.0,1.0,1.0),  (t-0.25)*4.0);
+    else if (t < 0.75) col = mix(vec3(1.0,1.0,1.0),   vec3(1.0,0.6,0.1),  (t-0.5)*4.0);
+    else               col = mix(vec3(1.0,0.6,0.1),   vec3(1.0,0.1,0.05), (t-0.75)*4.0);
+    vAlpha = 0.75 + t * 0.25;
+  }
+  vColor = col;
+}
+`;
+
+// --- PARTICLE RENDER fragment ---
+const renderFS = `#version 300 es
+precision mediump float;
+in vec3 vColor;
+in float vAlpha;
+out vec4 fragColor;
+void main() {
+  vec2 c = gl_PointCoord - 0.5;
+  float d = length(c);
+  if (d > 0.5) discard;
+  float soft = 1.0 - smoothstep(0.0, 0.5, d);
+  float bright = exp(-d * d * 8.0);
+  fragColor = vec4(vColor * (0.5 + bright * 0.5), vAlpha * soft);
+}
+`;
+
+// --- FULLSCREEN QUAD (shared for post-processing) ---
+const quadVS = `#version 300 es
+in vec2 aPos;
+out vec2 vUV;
+void main() { vUV = aPos * 0.5 + 0.5; gl_Position = vec4(aPos, 0.0, 1.0); }
+`;
+
+// --- BLOOM THRESHOLD / BRIGHT EXTRACT ---
+const threshFS = `#version 300 es
+precision mediump float;
+uniform sampler2D uTex;
+in vec2 vUV;
+out vec4 fragColor;
+void main() {
+  vec3 c = texture(uTex, vUV).rgb;
+  float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  float thresh = 0.45;
+  vec3 bright = c * max(lum - thresh, 0.0) / max(lum, 0.001);
+  fragColor = vec4(bright, 1.0);
+}
+`;
+
+// --- GAUSSIAN BLUR (separable) ---
+const blurFS = `#version 300 es
+precision mediump float;
+uniform sampler2D uTex;
+uniform vec2 uDir;
+in vec2 vUV;
+out vec4 fragColor;
+void main() {
+  vec2 texel = uDir / vec2(textureSize(uTex, 0));
+  vec4 c = vec4(0.0);
+  float weights[9];
+  weights[0]=0.0625; weights[1]=0.125; weights[2]=0.0625;
+  weights[3]=0.125;  weights[4]=0.25;  weights[5]=0.125;
+  weights[6]=0.0625; weights[7]=0.125; weights[8]=0.0625;
+  // 9-tap Gaussian
+  float w[9];
+  w[0]=0.006; w[1]=0.061; w[2]=0.242; w[3]=0.383; w[4]=0.242; w[5]=0.061; w[6]=0.006; w[7]=0.0; w[8]=0.0;
+  for (int i = 0; i < 7; i++) {
+    c += w[i] * texture(uTex, vUV + texel * float(i - 3));
+  }
+  fragColor = c;
+}
+`;
+
+// --- COMPOSITE + TONE MAP ---
+const compFS = `#version 300 es
+precision mediump float;
+uniform sampler2D uHDR;
+uniform sampler2D uBloom;
+uniform float uBloomStr;
+in vec2 vUV;
+out vec4 fragColor;
+
+vec3 aces(vec3 x) {
+  float a=2.51, b=0.03, c=2.43, d=0.59, e=0.14;
+  return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);
+}
+
+void main() {
+  vec3 hdr   = texture(uHDR, vUV).rgb;
+  vec3 bloom = texture(uBloom, vUV).rgb;
+  vec3 color = hdr + bloom * uBloomStr;
+  color = aces(color * 1.2);
+  // Gamma
+  color = pow(max(color, 0.0), vec3(1.0/2.2));
+  // Subtle vignette
+  vec2 uv = vUV - 0.5;
+  float vig = 1.0 - dot(uv, uv) * 1.2;
+  fragColor = vec4(color * vig, 1.0);
+}
+`;
+
+// ============================================================
+// HELPERS
+// ============================================================
+function compileShader(type, src) {
+  const sh = gl.createShader(type);
+  gl.shaderSource(sh, src);
+  gl.compileShader(sh);
+  if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+    console.error(gl.getShaderInfoLog(sh));
+    console.error(src.split('\n').map((l,i)=>`${i+1}: ${l}`).join('\n'));
+    throw new Error('Shader compile error');
+  }
+  return sh;
+}
+
+function createProgram(vs, fs) {
+  const prog = gl.createProgram();
+  gl.attachShader(prog, compileShader(gl.VERTEX_SHADER, vs));
+  gl.attachShader(prog, compileShader(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    throw new Error(gl.getProgramInfoLog(prog));
+  }
+  return prog;
+}
+
+function createFloatTexture(w, h, data) {
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, w, h, 0, gl.RGBA, gl.FLOAT, data || null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return tex;
+}
+
+function createRGBATexture(w, h) {
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  // RGBA8/UNSIGNED_BYTE: guaranteed color-renderable in WebGL2, no extensions needed
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return tex;
+}
+
+function createPhysFBO(posTex, velTex) {
+  const fbo = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, posTex, 0);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, velTex, 0);
+  gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+  const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+  if (status !== gl.FRAMEBUFFER_COMPLETE) throw new Error('Physics FBO incomplete: ' + status);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  return fbo;
+}
+
+function createSingleFBO(tex, label) {
+  const fbo = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+  gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+  const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+  if (status !== gl.FRAMEBUFFER_COMPLETE) console.error(`FBO ${label} incomplete: 0x${status.toString(16)}`);
+  else console.log(`FBO ${label} OK`);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  return fbo;
+}
+
+// Mat4 helpers
+function mat4perspective(fovDeg, aspect, near, far) {
+  const f = 1 / Math.tan(fovDeg * Math.PI / 360);
+  return new Float32Array([
+    f/aspect, 0, 0, 0,
+    0, f, 0, 0,
+    0, 0, (far+near)/(near-far), -1,
+    0, 0, 2*far*near/(near-far), 0
+  ]);
+}
+function mat4multiply(a, b) {
+  // Column-major: C[col=i, row=j] = sum_k A[col=k, row=j] * B[col=i, row=k]
+  const out = new Float32Array(16);
+  for (let i=0;i<4;i++) for (let j=0;j<4;j++)
+    for (let k=0;k<4;k++) out[i*4+j] += a[k*4+j]*b[i*4+k];
+  return out;
+}
+function mat4rotateY(a) {
+  const c=Math.cos(a), s=Math.sin(a);
+  return new Float32Array([c,0,-s,0, 0,1,0,0, s,0,c,0, 0,0,0,1]);
+}
+function mat4rotateX(a) {
+  const c=Math.cos(a), s=Math.sin(a);
+  return new Float32Array([1,0,0,0, 0,c,s,0, 0,-s,c,0, 0,0,0,1]);
+}
+function mat4translate(x,y,z) {
+  const m = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
+  m[12]=x; m[13]=y; m[14]=z;
+  return m;
+}
+
+// ============================================================
+// INITIAL CONDITIONS
+// ============================================================
+function initUniverse() {
+  // posData: [x, y, z, mass] per particle
+  // velData: [vx, vy, vz, 0] per particle
+  const posData = new Float32Array(N * 4);
+  const velData = new Float32Array(N * 4);
+
+  let idx = 0;
+
+  function setParticle(x, y, z, mass, vx, vy, vz) {
+    if (idx >= N) return;
+    const i = idx * 4;
+    posData[i]=x; posData[i+1]=y; posData[i+2]=z; posData[i+3]=mass;
+    velData[i]=vx; velData[i+1]=vy; velData[i+2]=vz; velData[i+3]=0;
+    idx++;
+  }
+
+  // Galaxy disc creator
+  function makeGalaxy(cx, cy, cz, vcx, vcy, vcz, bhMass, numStars, discR, tiltAngle, spin) {
+    // Central black hole
+    setParticle(cx, cy, cz, bhMass, vcx, vcy, vcz);
+
+    // Disc stars
+    for (let i = 0; i < numStars; i++) {
+      // Exponential disc profile
+      const r = discR * (-Math.log(1 - Math.random() * 0.99)) * 0.3 + 0.5;
+      const clampR = Math.min(r, discR * 1.5);
+      const theta = Math.random() * 2 * Math.PI;
+      // Add spiral arm perturbation
+      const armPhase = Math.floor(Math.random() * 2) * Math.PI + theta * 0.3;
+      const armStr = 0.4 * Math.exp(-clampR / (discR * 0.6));
+      const pertTheta = theta + armStr * Math.sin(armPhase);
+
+      // Position in tilted disc plane
+      const cosT = Math.cos(tiltAngle), sinT = Math.sin(tiltAngle);
+      const lx = clampR * Math.cos(pertTheta);
+      const ly = clampR * Math.sin(pertTheta) * cosT + (Math.random()-0.5)*0.6;
+      const lz = clampR * Math.sin(pertTheta) * sinT;
+
+      // Circular orbital velocity (Keplerian around BH)
+      const v_circ = spin * Math.sqrt(G * bhMass / clampR);
+      const vx_loc = v_circ * (-Math.sin(pertTheta));
+      const vy_loc = v_circ * Math.cos(pertTheta) * cosT + (Math.random()-0.5)*0.3;
+      const vz_loc = v_circ * Math.cos(pertTheta) * sinT;
+
+      const mass = 0.5 + Math.random() * 2.5;
+      setParticle(cx+lx, cy+ly, cz+lz, mass, vcx+vx_loc, vcy+vy_loc, vcz+vz_loc);
+    }
+
+    // Dark matter halo (invisible but gravitating)
+    const haloCount = Math.floor(numStars * 0.25);
+    for (let i = 0; i < haloCount; i++) {
+      const r = discR * (0.8 + Math.random() * 2.5);
+      const theta = Math.random() * 2 * Math.PI;
+      const phi   = Math.acos(2 * Math.random() - 1);
+      const hx = r * Math.sin(phi) * Math.cos(theta);
+      const hy = r * Math.sin(phi) * Math.sin(theta) * 0.3;
+      const hz = r * Math.cos(phi);
+      const v_circ = Math.sqrt(G * bhMass / r) * 0.5;
+      const hvx = v_circ * (-Math.sin(theta));
+      const hvy = (Math.random()-0.5) * 0.5;
+      const hvz = v_circ * Math.cos(theta) * 0.5;
+      setParticle(cx+hx, cy+hy, cz+hz, 8.0, vcx+hvx, vcy+hvy, vcz+hvz);
+    }
+  }
+
+  // Two galaxies on collision course
+  // Galaxy A: left, tilted, spinning CCW
+  makeGalaxy(
+    -22, 4, -2,   // center
+    2.8, -0.4, 0.1, // approach velocity
+    700,           // black hole mass
+    2800,          // num stars
+    10,            // disc radius
+    0.15,          // tilt
+    1.0            // spin direction
+  );
+
+  // Galaxy B: right, opposite tilt, spinning CW
+  makeGalaxy(
+    22, -4, 2,
+    -2.8, 0.4, -0.1,
+    550,
+    2200,
+    8,
+    -0.25,
+    -1.0
+  );
+
+  // Fill remaining with intergalactic gas/stray stars
+  while (idx < N) {
+    const r = 60 + Math.random() * 80;
+    const theta = Math.random() * 2 * Math.PI;
+    const phi   = Math.acos(2 * Math.random() - 1);
+    const gx = r * Math.sin(phi) * Math.cos(theta);
+    const gy = r * Math.sin(phi) * Math.sin(theta) * 0.15;
+    const gz = r * Math.cos(phi);
+    setParticle(gx, gy, gz, 0.3 + Math.random() * 0.5, 0, 0, 0);
+  }
+
+  return { posData, velData };
+}
+
+// ============================================================
+// BUILD PROGRAMS & BUFFERS
+// ============================================================
+console.log('Compiling shaders...');
+const physProg   = createProgram(physVS, physFS);
+const renderProg = createProgram(renderVS, renderFS);
+const quadProg   = createProgram(quadVS, threshFS);
+const blurProg   = createProgram(quadVS, blurFS);
+const compProg   = createProgram(quadVS, compFS);
+
+// Fullscreen quad VAO
+const quadBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+
+function bindQuadVAO(prog) {
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+  const loc = gl.getAttribLocation(prog, 'aPos');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  return vao;
+}
+
+const physVAO   = bindQuadVAO(physProg);
+const quadVAO   = bindQuadVAO(quadProg);
+const blurVAO   = bindQuadVAO(blurProg);
+const compVAO   = bindQuadVAO(compProg);
+
+// Particle VAO (no buffer – uses gl_VertexID)
+const particleVAO = gl.createVertexArray();
+
+// ============================================================
+// TEXTURES & FBOs
+// ============================================================
+console.log('Building textures...');
+const { posData, velData } = initUniverse();
+
+let posTexA = createFloatTexture(TEX_W, TEX_H, posData);
+let velTexA = createFloatTexture(TEX_W, TEX_H, velData);
+let posTexB = createFloatTexture(TEX_W, TEX_H, null);
+let velTexB = createFloatTexture(TEX_W, TEX_H, null);
+
+let physFboA = createPhysFBO(posTexA, velTexA); // write target A
+let physFboB = createPhysFBO(posTexB, velTexB); // write target B
+// We'll ping-pong: read from A write to B, then read B write to A
+
+const W = canvas.width, H = canvas.height;
+const hdrTex    = createRGBATexture(W, H);
+const bloomTex1 = createRGBATexture(W, H);
+const bloomTex2 = createRGBATexture(W, H);
+const hdrFbo    = createSingleFBO(hdrTex,    'hdr');
+const bloomFbo1 = createSingleFBO(bloomTex1, 'bloom1');
+const bloomFbo2 = createSingleFBO(bloomTex2, 'bloom2');
+
+// ============================================================
+// SIMULATION STATE
+// ============================================================
+let posTexRead = posTexA, velTexRead = velTexA;
+let posTexWrite = posTexB, velTexWrite = velTexB;
+let physFboWrite = physFboB;
+
+let frame = 0;
+let simTime = 0;
+let paused = false;
+// FPS: count frames in last second
+let fpsFrames = 0, fpsDisplay = 0, fpsLastSec = performance.now();
+
+// ============================================================
+// CAMERA STATE
+// ============================================================
+const cam = {
+  rotX: 0.35, rotY: 0.0,
+  dist: 90,
+  panX: 0, panY: 0   // world-space pan
+};
+
+let mouseBtn = -1, lastMX = 0, lastMY = 0;
+const keys = {};
+
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+canvas.addEventListener('mousedown', e => {
+  mouseBtn = e.button; lastMX = e.clientX; lastMY = e.clientY;
+});
+window.addEventListener('mouseup', () => { mouseBtn = -1; });
+window.addEventListener('mousemove', e => {
+  if (mouseBtn < 0) return;
+  const dx = e.clientX - lastMX, dy = e.clientY - lastMY;
+  const isPan = mouseBtn === 2 || (mouseBtn === 0 && e.ctrlKey);
+  if (isPan) {
+    // Pan in view-space, scale with distance
+    const scale = cam.dist * 0.001;
+    cam.panX -= dx * scale;
+    cam.panY += dy * scale;
+  } else {
+    // Rotate
+    cam.rotY += dx * 0.005;
+    cam.rotX += dy * 0.003;
+    cam.rotX = Math.max(-1.5, Math.min(1.5, cam.rotX));
+  }
+  lastMX = e.clientX; lastMY = e.clientY;
+});
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  cam.dist = Math.max(5, Math.min(400, cam.dist * (1 + e.deltaY * 0.001)));
+}, { passive: false });
+window.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'Space') { e.preventDefault(); paused = !paused; }
+  if (e.code === 'KeyR') { location.reload(); }
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+function handleKeys() {
+  const speed = cam.dist * 0.008;
+  if (keys['KeyW'] || keys['ArrowUp'])    cam.panY += speed;
+  if (keys['KeyS'] || keys['ArrowDown'])  cam.panY -= speed;
+  if (keys['KeyA'] || keys['ArrowLeft'])  cam.panX -= speed;
+  if (keys['KeyD'] || keys['ArrowRight']) cam.panX += speed;
+  if (keys['KeyQ']) cam.dist = Math.max(5,  cam.dist * 0.98);
+  if (keys['KeyE']) cam.dist = Math.min(400, cam.dist * 1.02);
+}
+
+// ============================================================
+// CACHED UNIFORM LOCATIONS
+// ============================================================
+function uniforms(prog, names) {
+  const locs = {};
+  for (const n of names) locs[n] = gl.getUniformLocation(prog, n);
+  return locs;
+}
+const physU   = uniforms(physProg,   ['uPosTex','uVelTex','uDt','uG','uSoft']);
+const renderU = uniforms(renderProg, ['uPosTex','uVelTex','uMVP','uPointScale']);
+const quadU   = uniforms(quadProg,   ['uTex']);
+const blurU   = uniforms(blurProg,   ['uTex','uDir']);
+const compU   = uniforms(compProg,   ['uHDR','uBloom','uBloomStr']);
+
+// ============================================================
+// ANALYTICS (runs on CPU from GPU readback)
+// ============================================================
+const readBufPos = new Float32Array(TEX_W * TEX_H * 4);
+const readBufVel = new Float32Array(TEX_W * TEX_H * 4);
+let analyticsData = {
+  ke: 0, am: 0, clusters: 0, maxDens: 0, spread: 0,
+  phase: 'Approach', sep: 0
+};
+let lastAnalyticsFrame = -999;
+
+function runAnalytics() {
+  // Read position texture
+  const pfbo = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, pfbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, posTexRead, 0);
+  gl.readPixels(0, 0, TEX_W, TEX_H, gl.RGBA, gl.FLOAT, readBufPos);
+
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, velTexRead, 0);
+  gl.readPixels(0, 0, TEX_W, TEX_H, gl.RGBA, gl.FLOAT, readBufVel);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.deleteFramebuffer(pfbo);
+
+  // Compute kinetic energy and angular momentum
+  let ke = 0, lx = 0, ly = 0, lz = 0;
+  let cx = 0, cy = 0, cz = 0, totalM = 0;
+  // First pass: center of mass
+  for (let i = 0; i < N; i++) {
+    const pi = i*4;
+    const m = readBufPos[pi+3];
+    cx += readBufPos[pi]   * m;
+    cy += readBufPos[pi+1] * m;
+    cz += readBufPos[pi+2] * m;
+    totalM += m;
+  }
+  cx /= totalM; cy /= totalM; cz /= totalM;
+
+  // Second pass: KE, AM, spread
+  let sx = 0, sy = 0, sz = 0;  // spread
+  let bhA = null, bhB = null;  // track black holes
+  let bhAIdx = -1, bhBIdx = -1;
+
+  for (let i = 0; i < N; i++) {
+    const pi = i*4;
+    const m = readBufPos[pi+3];
+    const px = readBufPos[pi] - cx;
+    const py = readBufPos[pi+1] - cy;
+    const pz = readBufPos[pi+2] - cz;
+    const vx = readBufVel[pi];
+    const vy = readBufVel[pi+1];
+    const vz = readBufVel[pi+2];
+    const v2 = vx*vx + vy*vy + vz*vz;
+    ke += 0.5 * m * v2;
+    // L = r × p
+    lx += m * (py * vz - pz * vy);
+    ly += m * (pz * vx - px * vz);
+    lz += m * (px * vy - py * vx);
+    sx += px*px; sy += py*py; sz += pz*pz;
+
+    if (m > 500) {
+      if (bhAIdx < 0) { bhAIdx = i; bhA = [readBufPos[pi], readBufPos[pi+1], readBufPos[pi+2]]; }
+      else if (bhBIdx < 0) { bhBIdx = i; bhB = [readBufPos[pi], readBufPos[pi+1], readBufPos[pi+2]]; }
+    }
+  }
+
+  const spread = Math.sqrt((sx+sy+sz)/N);
+  const am = Math.sqrt(lx*lx + ly*ly + lz*lz);
+
+  // Galaxy separation
+  let sep = -1;
+  if (bhA && bhB) {
+    const dx = bhA[0]-bhB[0], dy = bhA[1]-bhB[1], dz = bhA[2]-bhB[2];
+    sep = Math.sqrt(dx*dx+dy*dy+dz*dz);
+  }
+
+  // Density-based cluster detection using a 2D grid
+  const GRID = 24;
+  const grid = new Int32Array(GRID * GRID);
+  const bounds = 60;
+  for (let i = 0; i < N; i++) {
+    const pi = i*4;
+    if (readBufPos[pi+3] > 5.0) continue; // skip dark matter
+    const gxi = Math.floor((readBufPos[pi]   + bounds) / (2*bounds) * GRID);
+    const gyi = Math.floor((readBufPos[pi+1] + bounds) / (2*bounds) * GRID);
+    if (gxi >= 0 && gxi < GRID && gyi >= 0 && gyi < GRID) {
+      grid[gyi * GRID + gxi]++;
+    }
+  }
+  const avgDens = N / (GRID * GRID);
+  const threshold = avgDens * 5;
+  let maxDens = 0;
+  // Simple blob counting with BFS
+  const visited = new Uint8Array(GRID * GRID);
+  let clusters = 0;
+  for (let y = 0; y < GRID; y++) for (let x = 0; x < GRID; x++) {
+    const i = y*GRID+x;
+    if (!visited[i] && grid[i] > threshold) {
+      clusters++;
+      const queue = [i];
+      while (queue.length) {
+        const c = queue.pop();
+        if (visited[c]) continue;
+        visited[c] = 1;
+        const cx2 = c % GRID, cy2 = Math.floor(c / GRID);
+        [[1,0],[-1,0],[0,1],[0,-1]].forEach(([dx,dy]) => {
+          const nx=cx2+dx, ny=cy2+dy;
+          if (nx>=0&&nx<GRID&&ny>=0&&ny<GRID&&!visited[ny*GRID+nx]&&grid[ny*GRID+nx]>threshold)
+            queue.push(ny*GRID+nx);
+        });
+      }
+    }
+    maxDens = Math.max(maxDens, grid[i]);
+  }
+
+  // Determine simulation phase
+  let phase;
+  if (sep > 35) phase = 'Approach';
+  else if (sep > 15) phase = 'Interaction';
+  else if (sep > 5) phase = 'Merger';
+  else if (clusters >= 2) phase = 'Fragmentation';
+  else phase = 'Post-Merger';
+
+  analyticsData = { ke: ke.toFixed(0), am: am.toFixed(0), clusters, maxDens, spread: spread.toFixed(1), phase, sep: sep >= 0 ? sep.toFixed(1) : '?' };
+}
+
+// ============================================================
+// UI UPDATE
+// ============================================================
+const dom = id => document.getElementById(id);
+function updateUI() {
+  dom('s-time').textContent = simTime.toFixed(1) + ' Gyr';
+  dom('s-ke').textContent = analyticsData.ke;
+  dom('s-am').textContent = analyticsData.am;
+  dom('s-clusters').textContent = analyticsData.clusters;
+  dom('s-maxdens').textContent = analyticsData.maxDens;
+  dom('s-spread').textContent = analyticsData.spread;
+  dom('s-phase').textContent = analyticsData.phase;
+  dom('s-sep').textContent = analyticsData.sep;
+
+  // Event log
+  const events = [];
+  if (analyticsData.phase === 'Approach') events.push('Galaxies converging...');
+  if (analyticsData.phase === 'Interaction') events.push('Tidal forces distorting discs');
+  if (analyticsData.phase === 'Merger') events.push('Galactic nuclei merging!');
+  if (analyticsData.clusters >= 3) events.push(`${analyticsData.clusters} density cores detected`);
+  if (analyticsData.maxDens > 30) events.push('High-density nucleus forming');
+  if (analyticsData.phase === 'Post-Merger') events.push('Elliptical remnant stabilizing');
+  dom('events').textContent = events.join('\n') || 'Monitoring structure formation...';
+}
+
+// ============================================================
+// RENDER PASS HELPERS
+// ============================================================
+function drawQuad(vao) {
+  gl.bindVertexArray(vao);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
+function bindTex(unit, tex) {
+  gl.activeTexture(gl.TEXTURE0 + unit);
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+}
+
+// ============================================================
+// MAIN RENDER LOOP
+// ============================================================
+let glErrLogged = false;
+function checkGL(label) {
+  if (glErrLogged) return;
+  const e = gl.getError();
+  if (e !== gl.NO_ERROR) { console.error(`GL error at ${label}: 0x${e.toString(16)}`); glErrLogged = true; }
+}
+
+function render(ts) {
+  requestAnimationFrame(render);
+
+  // FPS counter
+  fpsFrames++;
+  const now = performance.now();
+  if (now - fpsLastSec >= 1000) {
+    fpsDisplay = Math.round(fpsFrames * 1000 / (now - fpsLastSec));
+    fpsFrames = 0; fpsLastSec = now;
+    dom('s-fps').textContent = fpsDisplay;
+  }
+
+  handleKeys();
+
+  // Physics step (ping-pong)
+  if (!paused) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, physFboWrite);
+    gl.viewport(0, 0, TEX_W, TEX_H);
+    gl.useProgram(physProg);
+    bindTex(0, posTexRead);
+    bindTex(1, velTexRead);
+    gl.uniform1i(physU.uPosTex, 0);
+    gl.uniform1i(physU.uVelTex, 1);
+    gl.uniform1f(physU.uDt, DT);
+    gl.uniform1f(physU.uG, G);
+    gl.uniform1f(physU.uSoft, SOFTENING);
+    drawQuad(physVAO);
+
+    // Swap
+    [posTexRead, posTexWrite] = [posTexWrite, posTexRead];
+    [velTexRead, velTexWrite] = [velTexWrite, velTexRead];
+    physFboWrite = (physFboWrite === physFboB) ? physFboA : physFboB;
+
+    frame++;
+    simTime += DT * 0.1;
+  }
+
+  // Analytics every 90 frames
+  if (frame - lastAnalyticsFrame >= 90) {
+    lastAnalyticsFrame = frame;
+    runAnalytics();
+    updateUI();
+  }
+
+  // Build MVP matrix
+  const aspect = W / H;
+  const proj = mat4perspective(60, aspect, 0.5, 1000);
+  const view = mat4multiply(
+    mat4translate(-cam.panX, -cam.panY, -cam.dist),
+    mat4multiply(mat4rotateX(cam.rotX), mat4rotateY(cam.rotY))
+  );
+  const mvp = mat4multiply(proj, view);
+
+  // Render particles to HDR framebuffer
+  gl.bindFramebuffer(gl.FRAMEBUFFER, hdrFbo);
+  gl.viewport(0, 0, W, H);
+  gl.clearColor(0, 0, 0, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE); // additive for glow
+
+  gl.useProgram(renderProg);
+  bindTex(0, posTexRead);
+  bindTex(1, velTexRead);
+  gl.uniform1i(renderU.uPosTex, 0);
+  gl.uniform1i(renderU.uVelTex, 1);
+  gl.uniformMatrix4fv(renderU.uMVP, false, mvp);
+  gl.uniform1f(renderU.uPointScale, Math.max(W, H) / 60);
+
+  gl.bindVertexArray(particleVAO);
+  gl.drawArrays(gl.POINTS, 0, N);
+  checkGL('particle draw');
+
+  gl.disable(gl.BLEND);
+
+  // Bloom: threshold → blur H → blur V
+  gl.useProgram(quadProg);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, bloomFbo1);
+  gl.viewport(0, 0, W, H);
+  bindTex(0, hdrTex);
+  gl.uniform1i(quadU.uTex, 0);
+  drawQuad(quadVAO);
+
+  gl.useProgram(blurProg);
+  // Horizontal
+  gl.bindFramebuffer(gl.FRAMEBUFFER, bloomFbo2);
+  bindTex(0, bloomTex1);
+  gl.uniform1i(blurU.uTex, 0);
+  gl.uniform2f(blurU.uDir, 1.0, 0.0);
+  drawQuad(blurVAO);
+  // Vertical
+  gl.bindFramebuffer(gl.FRAMEBUFFER, bloomFbo1);
+  bindTex(0, bloomTex2);
+  gl.uniform1i(blurU.uTex, 0);
+  gl.uniform2f(blurU.uDir, 0.0, 1.0);
+  drawQuad(blurVAO);
+
+  // Composite to screen
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, W, H);
+  gl.useProgram(compProg);
+  bindTex(0, hdrTex);
+  bindTex(1, bloomTex1);
+  gl.uniform1i(compU.uHDR, 0);
+  gl.uniform1i(compU.uBloom, 1);
+  gl.uniform1f(compU.uBloomStr, 2.5);
+  drawQuad(compVAO);
+}
+
+// ============================================================
+// KICK OFF
+// ============================================================
+document.getElementById('loading').style.display = 'none';
+document.getElementById('panel').style.display = 'block';
+
+// Set dropdown to current N and reload on change
+const nSelect = dom('n-select');
+nSelect.value = String(N);
+nSelect.addEventListener('change', () => {
+  location.href = '?n=' + nSelect.value;
+});
+
+// Run initial analytics
+runAnalytics();
+updateUI();
+
+console.log(`Universe simulator ready. ${N} particles, ${TEX_W}x${TEX_H} physics texture.`);
+requestAnimationFrame(render);
+
+window.addEventListener('resize', () => {
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+});
+</script>
+</body>
+</html>

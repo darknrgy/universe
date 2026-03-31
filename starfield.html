@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Starfield</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#000; overflow:hidden; font-family:'Courier New',monospace; user-select:none; }
+canvas { display:block; cursor:crosshair; }
+#ui {
+  position:fixed; bottom:0; left:0; right:0;
+  padding:14px 30px 18px;
+  background:linear-gradient(transparent, rgba(0,3,10,0.93));
+  display:flex; align-items:center; gap:40px; flex-wrap:wrap;
+}
+.ctrl { display:flex; align-items:center; gap:10px; }
+.ctrl label { color:#2a6a8a; font-size:10px; letter-spacing:2px; text-transform:uppercase; white-space:nowrap; }
+input[type=range] {
+  -webkit-appearance:none; appearance:none;
+  width:180px; height:2px; background:#0a2030; border-radius:2px; outline:none; cursor:pointer;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance:none; width:11px; height:11px;
+  border-radius:50%; background:#1ad; cursor:pointer;
+}
+.val { color:#8f5; font-size:11px; font-weight:bold; min-width:90px; }
+#hud {
+  position:fixed; top:12px; right:14px;
+  color:#1a3a2a; font-size:10px; letter-spacing:1px;
+  text-align:right; line-height:1.9; pointer-events:none;
+}
+#hud b { color:#2a7a4a; }
+#hint {
+  position:fixed; top:12px; left:14px;
+  color:#0a2a1a; font-size:10px; letter-spacing:1px; line-height:2.0;
+}
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<div id="hud">FPS <b id="h-fps">—</b><br>SPEED <b id="h-spd">—</b><br>STARS <b id="h-n">—</b></div>
+<div id="hint">DRAG · rotate&nbsp;&nbsp;SCROLL · speed<br>SPACE · pause&nbsp;&nbsp;&nbsp;&nbsp;R · reset view</div>
+<div id="ui">
+  <div class="ctrl">
+    <label>Velocity</label>
+    <input type="range" id="s-vel" min="0" max="100" value="28">
+    <span class="val" id="v-vel">—</span>
+  </div>
+  <div class="ctrl">
+    <label>Stars</label>
+    <input type="range" id="s-stars" min="0" max="100" value="85">
+    <span class="val" id="v-stars">—</span>
+  </div>
+  <div class="ctrl">
+    <label>Fog</label>
+    <input type="range" id="s-fog" min="0" max="100" value="15">
+    <span class="val" id="v-fog">—</span>
+  </div>
+</div>
+<script>
+'use strict';
+
+// ── Canvas / GL ────────────────────────────────────────────────
+const canvas = document.getElementById('canvas');
+canvas.width  = window.innerWidth;
+canvas.height = window.innerHeight;
+const gl = canvas.getContext('webgl2', { antialias:false, alpha:false });
+if (!gl) { alert('WebGL2 required'); throw 0; }
+
+// ── Sliders — log scale ────────────────────────────────────────
+const VEL_MIN=1,    VEL_MAX=15000;
+const STR_MIN=1000, STR_MAX=50000000;   // 1k – 50M
+
+function logVal(raw, lo, hi){
+  return Math.round(Math.pow(10, Math.log10(lo) + (Math.log10(hi)-Math.log10(lo)) * raw/100));
+}
+function fmtN(n){
+  return n>=1e6 ? (n/1e6).toFixed(2)+'M' : n>=1000 ? (n/1000).toFixed(0)+'k' : String(n);
+}
+
+const sVel=document.getElementById('s-vel'),   sStars=document.getElementById('s-stars');
+const vVel=document.getElementById('v-vel'),   vStars=document.getElementById('v-stars');
+const hFps=document.getElementById('h-fps'),   hSpd=document.getElementById('h-spd'),  hN=document.getElementById('h-n');
+
+const sFog=document.getElementById('s-fog'), vFog=document.getElementById('v-fog');
+
+let velocity = logVal(+sVel.value,   VEL_MIN, VEL_MAX);
+let N        = logVal(+sStars.value, STR_MIN, STR_MAX);
+let fog      = +sFog.value / 100;  // 0–1
+
+function setVelLabel(){ vVel.textContent=velocity.toLocaleString()+' u/s'; hSpd.textContent=velocity.toLocaleString(); }
+function setStarLabel(){ vStars.textContent=fmtN(N); hN.textContent=fmtN(N); }
+
+sVel.addEventListener('input',   ()=>{ velocity=logVal(+sVel.value,   VEL_MIN, VEL_MAX); setVelLabel(); });
+sStars.addEventListener('input', ()=>{ N=logVal(+sStars.value, STR_MIN, STR_MAX); setStarLabel(); });
+sFog.addEventListener('input', ()=>{ fog=+sFog.value/100; vFog.textContent=sFog.value+'%'; });
+
+setVelLabel(); setStarLabel();
+vFog.textContent = sFog.value + '%';
+
+// ── Scene constants ────────────────────────────────────────────
+const FAR    = 5000.0;
+const SPREAD = 7000.0;
+
+// ── Shaders ────────────────────────────────────────────────────
+// No vertex buffer — everything is derived from gl_VertexID via integer hashing.
+// gl_VertexID is a highp int (up to 2^31-1), so no float precision loss at 50M.
+//
+// Per-star deterministic values (stable across frames, derived once):
+//   x_init, y_init : initial random position in [-SPREAD, SPREAD]
+//   z_init         : initial depth phase in [-FAR, 0)
+//   w_seed         : unique per-star seed ∈ [0,1) for cycle hashing
+//
+// Position each frame:
+//   raw = z_init + uWithin       — sub-FAR offset, always a small float (precise)
+//   z   = raw >= 0 ? raw-FAR : raw    — wraps into (-FAR, 0)
+//   x,y = initial on first pass, hashed per-cycle on recycling
+
+const VERT_SRC = `#version 300 es
+precision highp float;
+precision highp int;
+
+uniform mat4  uMVP;
+uniform float uWithin;     // camOffset mod FAR  ∈ [0, FAR)
+uniform float uCycleBase;  // floor(camOffset / FAR)
+uniform float uFar;
+uniform float uSpread;
+uniform float uSpeed;
+uniform float uFog;       // 0 = no distance falloff, 1 = heavy fog
+
+out vec3  vColor;
+out float vAlpha;
+
+// ── Integer hash (finalizer mix — fast, high quality) ─────────
+uint ihash(uint x) {
+  x ^= x >> 16u;  x *= 0x7feb352du;
+  x ^= x >> 15u;  x *= 0x846ca68bu;
+  x ^= x >> 16u;
+  return x;
+}
+// Combine two keys into one hash
+uint ihash2(uint a, uint b){ return ihash(a ^ (ihash(b) + 0x9e3779b9u + (a<<6u) + (a>>2u))); }
+
+// uint → float in [0, 1)
+float rnd(uint v){ return float(v) * (1.0/4294967296.0); }
+
+// Sin-free float hash (for small inputs already in [0,1))
+float fhash(float p){ p=fract(p*.1031); p*=p+33.33; p*=p+p; return fract(p); }
+
+void main(){
+  uint id = uint(gl_VertexID);
+
+  // ── Stable per-star random values from integer ID ────────────
+  float r_init  = sqrt(rnd(ihash(id ^ 0x1a2b3c4du))) * uSpread;  // uniform disk radius
+  float ph_init = rnd(ihash(id ^ 0x5e6f7a8bu)) * 6.28318530718;  // angle
+  float x_init  = r_init * cos(ph_init);
+  float y_init  = r_init * sin(ph_init);
+  float z_init = -rnd(ihash(id ^ 0x9c0d1e2fu)) * uFar;    // ∈ [-FAR, 0)
+  float w_seed =  rnd(ihash(id ^ 0x3b4c5d6eu));            // ∈ [0, 1)
+
+  // ── Z position ───────────────────────────────────────────────
+  // z_init ∈ [-FAR, 0),  uWithin ∈ [0, FAR)  →  raw ∈ (-FAR, FAR)
+  float raw    = z_init + uWithin;
+  bool  passed = (raw >= 0.0);
+  float z      = passed ? (raw - uFar) : raw;   // always ∈ (-FAR, 0)
+
+  // ── X / Y position ───────────────────────────────────────────
+  float thisCycle = uCycleBase + (passed ? 1.0 : 0.0);
+  float x, y;
+  if (thisCycle < 0.5) {
+    // First pass — use the baked-in initial position
+    x = x_init;
+    y = y_init;
+  } else {
+    // Recycled — unique position per (star, cycle) via golden-ratio sequence
+    // then integer-hashed to remove low-discrepancy patterns
+    const float PHI = 0.6180339887498948;
+    float s = fract(w_seed + thisCycle * PHI);
+    float t = fract(w_seed + thisCycle * (1.0 - PHI) + 0.5);
+    uint  su = uint(s * 4294967295.0);
+    uint  tu  = uint(t * 4294967295.0);
+    float r   = sqrt(rnd(ihash2(su, id))) * uSpread;
+    float phi = rnd(ihash2(tu, id ^ 0xffffffffu)) * 6.28318530718;
+    x = r * cos(phi);
+    y = r * sin(phi);
+  }
+
+  gl_Position = uMVP * vec4(x, y, z, 1.0);
+
+  float depth = -z;
+
+  // ── Point size ───────────────────────────────────────────────
+  float sz = clamp(2000.0 / depth, 0.2, 12.0);
+  sz *= 1.0 + uSpeed * 0.00005;
+  gl_PointSize = sz;
+
+  // ── Alpha — graceful fade in from far horizon ─────────────────
+  float farFade    = 1.0 - smoothstep(uFar * 0.68, uFar, depth);
+  float nearFade   = smoothstep(0.3, 2.5, depth);
+  float r_norm     = length(vec2(x, y)) / uSpread;          // 0=center, 1=edge
+  float radialFade = 1.0 - smoothstep(0.55, 1.0, r_norm);  // thin out beyond 55% radius
+  // Distance fog: exponential falloff controlled by uFog slider
+  // uFog=0 → fogFade=1 (no effect), uFog=1 → strong falloff
+  float fogDensity = uFog * 3.0 / uFar;   // scale to tunnel depth
+  float fogFade    = exp(-fogDensity * depth);
+  vAlpha = clamp(farFade * nearFade * radialFade * fogFade, 0.0, 1.0);
+
+  // ── Spectral colour (stable: from per-star seed) ──────────────
+  float h  = fhash(w_seed * 0.7391 + 0.1);
+  float br = 0.5 + fhash(w_seed * 0.3947 + 0.9) * 0.5;
+  vec3 col;
+  if      (h < 0.05) col = vec3(1.00, 0.28, 0.18);   // M  red giant
+  else if (h < 0.16) col = vec3(1.00, 0.62, 0.25);   // K  orange
+  else if (h < 0.40) col = vec3(1.00, 0.95, 0.70);   // G  yellow
+  else if (h < 0.72) col = vec3(0.97, 0.97, 1.00);   // F/A white
+  else               col = vec3(0.68, 0.82, 1.00);   // B  blue-white
+  vColor = col * br;
+}`;
+
+const FRAG_SRC = `#version 300 es
+precision mediump float;
+in vec3  vColor;
+in float vAlpha;
+out vec4 fragColor;
+
+// Screen-space dither: breaks banding / moire on distant dim stars
+float dither(vec2 pos){
+  // Interleaved gradient noise (Jimenez 2014) — smooth, no visible pattern
+  return fract(52.9829189 * fract(dot(pos, vec2(0.06711056, 0.00583715))));
+}
+
+void main(){
+  vec2  c = gl_PointCoord - 0.5;
+  float d = length(c);
+  if (d > 0.5) discard;
+  float core = exp(-d*d*16.0);
+  float halo = exp(-d*d* 3.5) * 0.28;
+  float g    = core + halo;
+  // Apply dither: ±0.5/255 noise on the final value to break quantization bands
+  float n    = (dither(gl_FragCoord.xy) - 0.5) / 255.0;
+  vec3  col  = vColor * g + n;
+  float a    = vAlpha * g + n;
+  fragColor  = vec4(clamp(col, 0.0, 1.0), clamp(a, 0.0, 1.0));
+}`;
+
+// ── Compile / link ─────────────────────────────────────────────
+function mkShader(type, src){
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+const prog = gl.createProgram();
+gl.attachShader(prog, mkShader(gl.VERTEX_SHADER,   VERT_SRC));
+gl.attachShader(prog, mkShader(gl.FRAGMENT_SHADER, FRAG_SRC));
+gl.linkProgram(prog);
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+
+const uMVP      = gl.getUniformLocation(prog, 'uMVP');
+const uWithinL  = gl.getUniformLocation(prog, 'uWithin');
+const uCycleL   = gl.getUniformLocation(prog, 'uCycleBase');
+const uFarL     = gl.getUniformLocation(prog, 'uFar');
+const uSpreadL  = gl.getUniformLocation(prog, 'uSpread');
+const uSpeedL   = gl.getUniformLocation(prog, 'uSpeed');
+const uFogL     = gl.getUniformLocation(prog, 'uFog');
+
+// ── Empty VAO — no vertex attributes, everything from gl_VertexID ─
+const emptyVAO = gl.createVertexArray();
+
+// ── Camera ─────────────────────────────────────────────────────
+const cam = { rotX:0, rotY:0 };
+let mdwn=false, lmx=0, lmy=0;
+canvas.addEventListener('contextmenu', e=>e.preventDefault());
+canvas.addEventListener('mousedown',   e=>{ mdwn=true; lmx=e.clientX; lmy=e.clientY; });
+window.addEventListener('mouseup',     ()=>mdwn=false);
+window.addEventListener('mousemove',   e=>{
+  if (!mdwn) return;
+  cam.rotY += (e.clientX-lmx)*0.004;
+  cam.rotX += (e.clientY-lmy)*0.003;
+  cam.rotX  = Math.max(-1.5, Math.min(1.5, cam.rotX));
+  lmx=e.clientX; lmy=e.clientY;
+});
+canvas.addEventListener('wheel', e=>{
+  e.preventDefault();
+  const step = (+sVel.max - +sVel.min) * 0.04;
+  sVel.value = Math.max(+sVel.min, Math.min(+sVel.max, +sVel.value + Math.sign(e.deltaY)*step));
+  velocity = logVal(+sVel.value, VEL_MIN, VEL_MAX); setVelLabel();
+}, { passive:false });
+let paused=false;
+window.addEventListener('keydown', e=>{
+  if (e.code==='Space'){ e.preventDefault(); paused=!paused; }
+  if (e.code==='KeyR'){ cam.rotX=0; cam.rotY=0; }
+});
+
+// ── Mat4 ───────────────────────────────────────────────────────
+function perspective(fov,asp,n,f){
+  const t=1/Math.tan(fov*Math.PI/360);
+  return new Float32Array([t/asp,0,0,0, 0,t,0,0, 0,0,(f+n)/(n-f),-1, 0,0,2*f*n/(n-f),0]);
+}
+function mul(a,b){
+  const o=new Float32Array(16);
+  for(let i=0;i<4;i++) for(let j=0;j<4;j++) for(let k=0;k<4;k++) o[i*4+j]+=a[k*4+j]*b[i*4+k];
+  return o;
+}
+function rY(a){ const c=Math.cos(a),s=Math.sin(a); return new Float32Array([c,0,-s,0,0,1,0,0,s,0,c,0,0,0,0,1]); }
+function rX(a){ const c=Math.cos(a),s=Math.sin(a); return new Float32Array([1,0,0,0,0,c,s,0,0,-s,c,0,0,0,0,1]); }
+
+// ── Camera offset (JS double — never reset, always precise) ────
+let camOffset = 0.0;
+let lastT = performance.now();
+let fFrames=0, fLast=performance.now();
+
+// ── Render loop ────────────────────────────────────────────────
+function frame(ts){
+  requestAnimationFrame(frame);
+
+  fFrames++;
+  const now = performance.now();
+  if (now - fLast >= 1000){
+    hFps.textContent = Math.round(fFrames * 1000 / (now-fLast));
+    fFrames=0; fLast=now;
+  }
+
+  const dt = Math.min((ts-lastT)/1000, 0.05); lastT=ts;
+  if (!paused) camOffset += velocity * dt;
+
+  const within    = camOffset % FAR;
+  const cycleBase = Math.floor(camOffset / FAR);
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.clearColor(0, 0, 0.008, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+
+  const asp  = canvas.width / canvas.height;
+  const proj = perspective(80, asp, 0.3, FAR+200);
+  const view = mul(rX(cam.rotX), rY(cam.rotY));
+  const mvp  = mul(proj, view);
+
+  gl.useProgram(prog);
+  gl.uniformMatrix4fv(uMVP,    false, mvp);
+  gl.uniform1f(uWithinL,  within);
+  gl.uniform1f(uCycleL,   cycleBase);
+  gl.uniform1f(uFarL,     FAR);
+  gl.uniform1f(uSpreadL,  SPREAD);
+  gl.uniform1f(uSpeedL,   velocity);
+  gl.uniform1f(uFogL,     fog);
+
+  gl.bindVertexArray(emptyVAO);
+  gl.drawArrays(gl.POINTS, 0, N);
+
+  gl.disable(gl.BLEND);
+}
+
+requestAnimationFrame(frame);
+window.addEventListener('resize', ()=>{ canvas.width=innerWidth; canvas.height=innerHeight; });
+</script>
+</body>
+</html>
