@@ -56,6 +56,23 @@ input[type=range]::-webkit-slider-thumb {
     <input type="range" id="s-fog" min="0" max="100" value="15">
     <span class="val" id="v-fog">—</span>
   </div>
+  <div class="ctrl">
+    <label>Attitude</label>
+    <input type="range" id="s-att" min="0" max="100" value="40">
+    <span class="val" id="v-att">—</span>
+  </div>
+  <div class="ctrl">
+    <label>Lag</label>
+    <input type="range" id="s-lag" min="0" max="100" value="50">
+    <span class="val" id="v-lag">—</span>
+  </div>
+  <div class="ctrl">
+    <button id="b-fly" style="
+      background:#0a1a2a; color:#2af; border:1px solid #1a4a6a; border-radius:4px;
+      padding:4px 16px; font-family:inherit; font-size:10px; letter-spacing:2px;
+      cursor:pointer; text-transform:uppercase; transition:all 0.2s;
+    ">FLY</button>
+  </div>
 </div>
 <script>
 'use strict';
@@ -95,8 +112,18 @@ sVel.addEventListener('input',   ()=>{ velocity=logVal(+sVel.value,   VEL_MIN, V
 sStars.addEventListener('input', ()=>{ N=logVal(+sStars.value, STR_MIN, STR_MAX); setStarLabel(); });
 sFog.addEventListener('input', ()=>{ fog=+sFog.value/100; vFog.textContent=sFog.value+'%'; });
 
+const sAtt=document.getElementById('s-att'), vAtt=document.getElementById('v-att');
+const sLag=document.getElementById('s-lag'), vLag=document.getElementById('v-lag');
+let attScale = +sAtt.value / 100;  // 0–1
+let lagScale = +sLag.value / 100;  // 0–1
+function setAttLabel(){ vAtt.textContent = Math.round(attScale*100)+'%'; }
+function setLagLabel(){ vLag.textContent = Math.round(lagScale*100)+'%'; }
+sAtt.addEventListener('input', ()=>{ attScale=+sAtt.value/100; setAttLabel(); });
+sLag.addEventListener('input', ()=>{ lagScale=+sLag.value/100; setLagLabel(); });
+
 setVelLabel(); setStarLabel();
 vFog.textContent = sFog.value + '%';
+setAttLabel(); setLagLabel();
 
 // ── Scene constants ────────────────────────────────────────────
 const FAR    = 5000.0;
@@ -304,11 +331,119 @@ function mul(a,b){
 }
 function rY(a){ const c=Math.cos(a),s=Math.sin(a); return new Float32Array([c,0,-s,0,0,1,0,0,s,0,c,0,0,0,0,1]); }
 function rX(a){ const c=Math.cos(a),s=Math.sin(a); return new Float32Array([1,0,0,0,0,c,s,0,0,-s,c,0,0,0,0,1]); }
+function rZ(a){ const c=Math.cos(a),s=Math.sin(a); return new Float32Array([c,s,0,0,-s,c,0,0,0,0,1,0,0,0,0,1]); }
 
 // ── Camera offset (JS double — never reset, always precise) ────
 let camOffset = 0.0;
 let lastT = performance.now();
 let fFrames=0, fLast=performance.now();
+
+// ── Value noise (CPU) ──────────────────────────────────────────
+function _nh(n){ const s=Math.sin(n*127.1+311.7)*43758.5453; return s-Math.floor(s); }
+function vnoise(t){
+  const i=Math.floor(t), f=t-i, u=f*f*(3-2*f);
+  return (1-u)*(_nh(i)*2-1) + u*(_nh(i+1)*2-1);
+}
+// Multi-octave noise — natural pilot-like input
+function fbm(t, seed){
+  return vnoise(t*0.04 + seed) * 1.0     // sweeping turns  ~25s period
+       + vnoise(t*0.13 + seed) * 0.45    // course corrections ~8s
+       + vnoise(t*0.5  + seed) * 0.12    // small adjustments  ~2s
+       + vnoise(t*2.0  + seed) * 0.025;  // micro-jitter
+}
+
+// ── Flight dynamics ────────────────────────────────────────────
+let flyMode = false;
+let flyTime = 0;
+
+// Attitude = where the ship's nose points
+const att  = { p:0, y:0, r:0 };
+const attV = { p:0, y:0, r:0 };
+
+// Trajectory = actual flight direction (lags attitude via spring-damper)
+const trj  = { p:0, y:0, r:0 };
+const trjV = { p:0, y:0, r:0 };
+
+const FLY = {
+  spring:    3.0,    // trajectory ← attitude spring stiffness
+  damping:   1.4,    // < 2*sqrt(spring) → underdamped (bouncy)
+  maxRate:   1.0,    // max attitude rate (rad/s)
+  attSmooth: 2.0,    // joystick → attitude response speed
+  coordTurn: 2.8,    // roll coupling with yaw (coordinated banking)
+  rollDecay: 0.92,   // roll self-centering per second
+  speedDrag: 1.2,    // how much turns slow you down
+  vibAmt:    0.0018, // high-freq vibration amplitude
+};
+
+function updateFlight(dt) {
+  flyTime += dt;
+
+  // ── Procedural joystick (layered noise, scaled by attitude slider) ──
+  // attScale 0→1 maps joystick strength from gentle to dramatic
+  const jStr = 0.05 + attScale * 0.55;  // 0.05–0.6
+  const jP = fbm(flyTime, 100) * jStr;
+  const jY = fbm(flyTime, 200) * jStr * 1.2;
+  const jR = fbm(flyTime, 300) * jStr * 0.9;
+
+  // ── Attitude response to joystick (smooth, rate-limited) ───────
+  attV.p += (jP * FLY.maxRate - attV.p) * FLY.attSmooth * dt;
+  attV.y += (jY * FLY.maxRate - attV.y) * FLY.attSmooth * dt;
+
+  // Coordinated turn: auto-bank into yaw direction
+  const coordRoll = -attV.y * FLY.coordTurn;
+  const desiredRollRate = (jR * FLY.maxRate * 0.3 + coordRoll);
+  attV.r += (desiredRollRate - attV.r) * FLY.attSmooth * 1.5 * dt;
+
+  att.p += attV.p * dt;
+  att.y += attV.y * dt;
+  att.r += attV.r * dt;
+
+  // All axes spring back toward forward (-z) — prevents drifting away
+  const CENTER_PULL = 0.6;  // strength of re-centering force
+  att.p -= att.p * CENTER_PULL * dt;
+  att.y -= att.y * CENTER_PULL * dt;
+  att.r -= att.r * CENTER_PULL * 0.4 * dt;  // roll re-centers more gently
+
+  // Hard clamp — scales with attitude slider (max ~16.8 rad at full)
+  const MAX_ANG = 1.0 + attScale * 15.8;
+  att.p = Math.max(-MAX_ANG, Math.min(MAX_ANG, att.p));
+  att.y = Math.max(-MAX_ANG, Math.min(MAX_ANG, att.y));
+  att.r = Math.max(-MAX_ANG, Math.min(MAX_ANG, att.r));
+
+  // ── Trajectory follows attitude via spring-damper ──────────────
+  // lagScale: 0 = instant tracking, 1 = very loose and bouncy
+  // Spring gets weaker and damping drops (more underdamped) with more lag
+  const curSpring = 12.0 - lagScale * 11.0;   // 12 (stiff) → 1 (loose)
+  const curDamp   = 4.0  - lagScale * 3.2;    // 4 (overdamped) → 0.8 (bouncy)
+  for (const a of ['p','y','r']) {
+    const err   = att[a] - trj[a];
+    const force = curSpring * err - curDamp * trjV[a];
+    trjV[a] += force * dt;
+    trj[a]  += trjV[a] * dt;
+  }
+
+  // ── Speed reduction from turn rate ─────────────────────────────
+  const turnMag = Math.sqrt(attV.p*attV.p + attV.y*attV.y);
+  return 1.0 / (1.0 + turnMag * FLY.speedDrag);
+}
+
+// ── Fly mode toggle ────────────────────────────────────────────
+const bFly = document.getElementById('b-fly');
+bFly.addEventListener('click', () => {
+  flyMode = !flyMode;
+  bFly.style.background = flyMode ? '#1a4a1a' : '#0a1a2a';
+  bFly.style.color      = flyMode ? '#4f4'    : '#2af';
+  bFly.style.borderColor= flyMode ? '#2a6a2a' : '#1a4a6a';
+  bFly.textContent      = flyMode ? 'FLYING'  : 'FLY';
+  if (flyMode) {
+    // Reset flight state
+    flyTime = 0;
+    att.p=att.y=att.r=0; attV.p=attV.y=attV.r=0;
+    trj.p=trj.y=trj.r=0; trjV.p=trjV.y=trjV.r=0;
+  } else {
+    cam.rotX=0; cam.rotY=0;
+  }
+});
 
 // ── Render loop ────────────────────────────────────────────────
 function frame(ts){
@@ -322,7 +457,21 @@ function frame(ts){
   }
 
   const dt = Math.min((ts-lastT)/1000, 0.05); lastT=ts;
-  if (!paused) camOffset += velocity * dt;
+
+  // ── Flight or manual camera ────────────────────────────────────
+  let speedMult = 1.0;
+  let viewMat;
+
+  if (flyMode) {
+    if (!paused) speedMult = updateFlight(dt);
+
+    // View follows trajectory (lagged) — you SEE the delay and bounce
+    viewMat = mul(rZ(trj.r), mul(rX(trj.p), rY(trj.y)));
+  } else {
+    viewMat = mul(rX(cam.rotX), rY(cam.rotY));
+  }
+
+  if (!paused) camOffset += velocity * speedMult * dt;
 
   const within    = camOffset % FAR;
   const cycleBase = Math.floor(camOffset / FAR);
@@ -337,8 +486,7 @@ function frame(ts){
 
   const asp  = canvas.width / canvas.height;
   const proj = perspective(80, asp, 0.3, FAR+200);
-  const view = mul(rX(cam.rotX), rY(cam.rotY));
-  const mvp  = mul(proj, view);
+  const mvp  = mul(proj, viewMat);
 
   gl.useProgram(prog);
   gl.uniformMatrix4fv(uMVP,    false, mvp);
