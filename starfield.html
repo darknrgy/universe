@@ -157,6 +157,7 @@ uniform float uFog;       // 0 = no distance falloff, 1 = heavy fog
 
 out vec3  vColor;
 out float vAlpha;
+out float vPointSize;
 
 // ── Integer hash (finalizer mix — fast, high quality) ─────────
 uint ihash(uint x) {
@@ -220,6 +221,7 @@ void main(){
   float sz = clamp(2000.0 / depth, 0.2, 12.0);
   sz *= 1.0 + uSpeed * 0.00005;
   gl_PointSize = sz;
+  vPointSize   = sz;
 
   // ── Alpha — graceful fade in from far horizon ─────────────────
   float farFade    = 1.0 - smoothstep(uFar * 0.68, uFar, depth);
@@ -248,26 +250,27 @@ const FRAG_SRC = `#version 300 es
 precision mediump float;
 in vec3  vColor;
 in float vAlpha;
+in float vPointSize;
 out vec4 fragColor;
-
-// Screen-space dither: breaks banding / moire on distant dim stars
-float dither(vec2 pos){
-  // Interleaved gradient noise (Jimenez 2014) — smooth, no visible pattern
-  return fract(52.9829189 * fract(dot(pos, vec2(0.06711056, 0.00583715))));
-}
 
 void main(){
   vec2  c = gl_PointCoord - 0.5;
   float d = length(c);
-  if (d > 0.5) discard;
+
+  // Anti-alias: smooth edge over ~1 pixel regardless of point size
+  // fwidth gives the rate of change of d across the fragment — perfect AA kernel
+  float edge = 0.5;
+  float aa   = 1.0 - smoothstep(edge - fwidth(d), edge, d);
+
   float core = exp(-d*d*16.0);
   float halo = exp(-d*d* 3.5) * 0.28;
-  float g    = core + halo;
-  // Apply dither: ±0.5/255 noise on the final value to break quantization bands
-  float n    = (dither(gl_FragCoord.xy) - 0.5) / 255.0;
-  vec3  col  = vColor * g + n;
-  float a    = vAlpha * g + n;
-  fragColor  = vec4(clamp(col, 0.0, 1.0), clamp(a, 0.0, 1.0));
+  float g    = (core + halo) * aa;
+
+  // For sub-pixel points (< 2px), soften further to avoid sparkle
+  float subpx = smoothstep(0.5, 2.0, vPointSize);
+  g *= mix(0.5, 1.0, subpx);
+
+  fragColor = vec4(vColor * g, vAlpha * g);
 }`;
 
 // ── Compile / link ─────────────────────────────────────────────
