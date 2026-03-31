@@ -113,7 +113,7 @@ function setVelLabel(){ vVel.textContent=velocity.toLocaleString()+' u/s'; hSpd.
 function setStarLabel(){ vStars.textContent=fmtN(N); hN.textContent=fmtN(N); }
 
 sVel.addEventListener('input',   ()=>{ velocity=logVal(+sVel.value,   VEL_MIN, VEL_MAX); setVelLabel(); });
-sStars.addEventListener('input', ()=>{ N=logVal(+sStars.value, STR_MIN, STR_MAX); setStarLabel(); });
+sStars.addEventListener('input', ()=>{ N=logVal(+sStars.value, STR_MIN, STR_MAX); setStarLabel(); updateGrid(); });
 sFog.addEventListener('input', ()=>{ fog=+sFog.value/100; vFog.textContent=sFog.value+'%'; });
 
 const sAtt=document.getElementById('s-att'), vAtt=document.getElementById('v-att');
@@ -130,123 +130,116 @@ vFog.textContent = sFog.value + '%';
 setAttLabel(); setLagLabel();
 
 // ── Scene constants ────────────────────────────────────────────
-const FAR    = 5000.0;
-const SPREAD = 7000.0;
+const MAX_DIST = 4000.0;
+
+// Grid: each gl_VertexID maps to a unique cell in a cube around the camera.
+// Stars are at fixed world positions determined by hash(worldCellCoord).
+let gridW, cellSize, drawCount;
+function updateGrid() {
+  gridW = Math.ceil(Math.cbrt(N));
+  if (gridW < 2) gridW = 2;
+  cellSize = MAX_DIST * 2 / gridW;
+  drawCount = gridW * gridW * gridW;
+}
+updateGrid();
 
 // ── Shaders ────────────────────────────────────────────────────
-// No vertex buffer — everything is derived from gl_VertexID via integer hashing.
-// gl_VertexID is a highp int (up to 2^31-1), so no float precision loss at 50M.
-//
-// Per-star deterministic values (stable across frames, derived once):
-//   x_init, y_init : initial random position in [-SPREAD, SPREAD]
-//   z_init         : initial depth phase in [-FAR, 0)
-//   w_seed         : unique per-star seed ∈ [0,1) for cycle hashing
-//
-// Position each frame:
-//   raw = z_init + uWithin       — sub-FAR offset, always a small float (precise)
-//   z   = raw >= 0 ? raw-FAR : raw    — wraps into (-FAR, 0)
-//   x,y = initial on first pass, hashed per-cycle on recycling
+// Spatial hash starfield: stars are at FIXED world positions.
+// Space is divided into cells. Each gl_VertexID maps to a cell offset
+// from the camera. The world cell coords are hashed to get a deterministic
+// star position. All math is camera-relative (small floats, high precision).
 
 const VERT_SRC = `#version 300 es
 precision highp float;
 precision highp int;
 
-uniform mat4  uMVP;
-uniform float uWithin;     // camOffset mod FAR  ∈ [0, FAR)
-uniform float uCycleBase;  // floor(camOffset / FAR)
-uniform float uFar;
-uniform float uSpread;
+uniform mat4  uVP;          // view-projection
+uniform ivec3 uCamCell;     // camera's grid cell (from JS double)
+uniform vec3  uCamFrac;     // camera's offset within its cell
+uniform float uCellSize;
+uniform int   uGridW;       // cube root of draw count
+uniform float uMaxDist;
 uniform float uSpeed;
-uniform float uFog;       // 0 = no distance falloff, 1 = heavy fog
+uniform float uFog;
 
 out vec3  vColor;
 out float vAlpha;
 out float vPointSize;
 
-// ── Integer hash (finalizer mix — fast, high quality) ─────────
 uint ihash(uint x) {
   x ^= x >> 16u;  x *= 0x7feb352du;
   x ^= x >> 15u;  x *= 0x846ca68bu;
   x ^= x >> 16u;
   return x;
 }
-// Combine two keys into one hash
-uint ihash2(uint a, uint b){ return ihash(a ^ (ihash(b) + 0x9e3779b9u + (a<<6u) + (a>>2u))); }
-
-// uint → float in [0, 1)
 float rnd(uint v){ return float(v) * (1.0/4294967296.0); }
-
-// Sin-free float hash (for small inputs already in [0,1))
 float fhash(float p){ p=fract(p*.1031); p*=p+33.33; p*=p+p; return fract(p); }
 
 void main(){
-  uint id = uint(gl_VertexID);
+  int id = gl_VertexID;
+  int gw = uGridW;
+  int gw2 = gw * gw;
+  int half_gw = gw / 2;
 
-  // ── Stable per-star random values from integer ID ────────────
-  float r_init  = sqrt(rnd(ihash(id ^ 0x1a2b3c4du))) * uSpread;  // uniform disk radius
-  float ph_init = rnd(ihash(id ^ 0x5e6f7a8bu)) * 6.28318530718;  // angle
-  float x_init  = r_init * cos(ph_init);
-  float y_init  = r_init * sin(ph_init);
-  float z_init = -rnd(ihash(id ^ 0x9c0d1e2fu)) * uFar;    // ∈ [-FAR, 0)
-  float w_seed =  rnd(ihash(id ^ 0x3b4c5d6eu));            // ∈ [0, 1)
+  // Map vertexID → 3D cell offset from camera
+  int gz = id / gw2;
+  int rem = id - gz * gw2;
+  int gy = rem / gw;
+  int gx = rem - gy * gw;
+  int ox = gx - half_gw;
+  int oy = gy - half_gw;
+  int oz = gz - half_gw;
 
-  // ── Z position ───────────────────────────────────────────────
-  // z_init ∈ [-FAR, 0),  uWithin ∈ [0, FAR)  →  raw ∈ (-FAR, FAR)
-  float raw    = z_init + uWithin;
-  bool  passed = (raw >= 0.0);
-  float z      = passed ? (raw - uFar) : raw;   // always ∈ (-FAR, 0)
+  // World cell coordinates (integer, wraps fine with uint hash)
+  ivec3 wc = uCamCell + ivec3(ox, oy, oz);
 
-  // ── X / Y position ───────────────────────────────────────────
-  float thisCycle = uCycleBase + (passed ? 1.0 : 0.0);
-  float x, y;
-  if (thisCycle < 0.5) {
-    // First pass — use the baked-in initial position
-    x = x_init;
-    y = y_init;
-  } else {
-    // Recycled — unique position per (star, cycle) via golden-ratio sequence
-    // then integer-hashed to remove low-discrepancy patterns
-    const float PHI = 0.6180339887498948;
-    float s = fract(w_seed + thisCycle * PHI);
-    float t = fract(w_seed + thisCycle * (1.0 - PHI) + 0.5);
-    uint  su = uint(s * 4294967295.0);
-    uint  tu  = uint(t * 4294967295.0);
-    float r   = sqrt(rnd(ihash2(su, id))) * uSpread;
-    float phi = rnd(ihash2(tu, id ^ 0xffffffffu)) * 6.28318530718;
-    x = r * cos(phi);
-    y = r * sin(phi);
+  // Spatial hash of world cell → deterministic star seed
+  uint seed = ihash(uint(wc.x) * 73856093u
+                  ^ uint(wc.y) * 19349663u
+                  ^ uint(wc.z) * 83492791u);
+
+  // Star position within cell [0, cellSize)
+  vec3 starOff = vec3(rnd(ihash(seed+1u)),
+                      rnd(ihash(seed+2u)),
+                      rnd(ihash(seed+3u))) * uCellSize;
+
+  // Position relative to camera (always small floats → precise)
+  vec3 relPos = vec3(float(ox), float(oy), float(oz)) * uCellSize
+              + starOff - uCamFrac;
+
+  float dist = length(relPos);
+
+  // Distance cull
+  if (dist > uMaxDist || dist < 0.1) {
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    vAlpha = 0.0; vPointSize = 0.0; vColor = vec3(0.0);
+    return;
   }
 
-  gl_Position = uMVP * vec4(x, y, z, 1.0);
+  gl_Position = uVP * vec4(relPos, 1.0);
 
-  float depth = -z;
-
-  // ── Point size ───────────────────────────────────────────────
-  float sz = clamp(2000.0 / depth, 0.2, 12.0);
+  // Point size
+  float sz = clamp(2000.0 / dist, 0.2, 12.0);
   sz *= 1.0 + uSpeed * 0.00005;
   gl_PointSize = sz;
   vPointSize   = sz;
 
-  // ── Alpha — graceful fade in from far horizon ─────────────────
-  float farFade    = 1.0 - smoothstep(uFar * 0.68, uFar, depth);
-  float nearFade   = smoothstep(0.3, 2.5, depth);
-  float r_norm     = length(vec2(x, y)) / uSpread;          // 0=center, 1=edge
-  float radialFade = 1.0 - smoothstep(0.55, 1.0, r_norm);  // thin out beyond 55% radius
-  // Distance fog: exponential falloff controlled by uFog slider
-  // uFog=0 → fogFade=1 (no effect), uFog=1 → strong falloff
-  float fogDensity = uFog * 3.0 / uFar;   // scale to tunnel depth
-  float fogFade    = exp(-fogDensity * depth);
-  vAlpha = clamp(farFade * nearFade * radialFade * fogFade, 0.0, 1.0);
+  // Alpha: distance fade + fog
+  float farFade  = 1.0 - smoothstep(uMaxDist * 0.7, uMaxDist, dist);
+  float nearFade = smoothstep(0.3, 2.5, dist);
+  float fogFade  = exp(-uFog * 3.0 / uMaxDist * dist);
+  vAlpha = clamp(farFade * nearFade * fogFade, 0.0, 1.0);
 
-  // ── Spectral colour (stable: from per-star seed) ──────────────
-  float h  = fhash(w_seed * 0.7391 + 0.1);
-  float br = 0.5 + fhash(w_seed * 0.3947 + 0.9) * 0.5;
+  // Spectral colour from world-cell hash
+  float w = rnd(seed);
+  float h  = fhash(w * 0.7391 + 0.1);
+  float br = 0.5 + fhash(w * 0.3947 + 0.9) * 0.5;
   vec3 col;
-  if      (h < 0.05) col = vec3(1.00, 0.55, 0.45);   // M  warm reddish
-  else if (h < 0.16) col = vec3(1.00, 0.78, 0.55);   // K  pale orange
-  else if (h < 0.40) col = vec3(1.00, 0.97, 0.85);   // G  warm white
-  else if (h < 0.72) col = vec3(0.98, 0.98, 1.00);   // F/A pure white
-  else               col = vec3(0.82, 0.88, 1.00);   // B  cool white
+  if      (h < 0.05) col = vec3(1.00, 0.55, 0.45);
+  else if (h < 0.16) col = vec3(1.00, 0.78, 0.55);
+  else if (h < 0.40) col = vec3(1.00, 0.97, 0.85);
+  else if (h < 0.72) col = vec3(0.98, 0.98, 1.00);
+  else               col = vec3(0.82, 0.88, 1.00);
   vColor = col * br;
 }`;
 
@@ -290,11 +283,12 @@ gl.attachShader(prog, mkShader(gl.FRAGMENT_SHADER, FRAG_SRC));
 gl.linkProgram(prog);
 if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
 
-const uMVP      = gl.getUniformLocation(prog, 'uMVP');
-const uWithinL  = gl.getUniformLocation(prog, 'uWithin');
-const uCycleL   = gl.getUniformLocation(prog, 'uCycleBase');
-const uFarL     = gl.getUniformLocation(prog, 'uFar');
-const uSpreadL  = gl.getUniformLocation(prog, 'uSpread');
+const uVP       = gl.getUniformLocation(prog, 'uVP');
+const uCamCellL = gl.getUniformLocation(prog, 'uCamCell');
+const uCamFracL = gl.getUniformLocation(prog, 'uCamFrac');
+const uCellSzL  = gl.getUniformLocation(prog, 'uCellSize');
+const uGridWL   = gl.getUniformLocation(prog, 'uGridW');
+const uMaxDistL = gl.getUniformLocation(prog, 'uMaxDist');
 const uSpeedL   = gl.getUniformLocation(prog, 'uSpeed');
 const uFogL     = gl.getUniformLocation(prog, 'uFog');
 
@@ -485,8 +479,17 @@ function rY(a){ const c=Math.cos(a),s=Math.sin(a); return new Float32Array([c,0,
 function rX(a){ const c=Math.cos(a),s=Math.sin(a); return new Float32Array([1,0,0,0,0,c,s,0,0,-s,c,0,0,0,0,1]); }
 function rZ(a){ const c=Math.cos(a),s=Math.sin(a); return new Float32Array([c,s,0,0,-s,c,0,0,0,0,1,0,0,0,0,1]); }
 
-// ── Camera offset (JS double — never reset, always precise) ────
-let camOffset = 0.0;
+// ── Camera 3D position (JS doubles — infinite precision) ───────
+const camPos = { x: 0, y: 0, z: 0 };
+
+function forwardDir(pitch, yaw) {
+  return {
+    x: -Math.sin(yaw) * Math.cos(pitch),
+    y:  Math.sin(pitch),
+    z: -Math.cos(yaw) * Math.cos(pitch)
+  };
+}
+
 let lastT = performance.now();
 let fFrames=0, fLast=performance.now();
 
@@ -626,10 +629,22 @@ function frame(ts){
     viewMat = mul(rX(cam.rotX), rY(cam.rotY));
   }
 
-  if (!paused) camOffset += velocity * speedMult * dt;
+  // Move camera through 3D space along its forward direction
+  if (!paused) {
+    const fwd = flyMode ? forwardDir(trj.p, trj.y) : forwardDir(cam.rotX, cam.rotY);
+    const spd = velocity * speedMult;
+    camPos.x += fwd.x * spd * dt;
+    camPos.y += fwd.y * spd * dt;
+    camPos.z += fwd.z * spd * dt;
+  }
 
-  const within    = camOffset % FAR;
-  const cycleBase = Math.floor(camOffset / FAR);
+  // Split position into integer cell + fractional offset (precision-safe)
+  const cx = Math.floor(camPos.x / cellSize);
+  const cy = Math.floor(camPos.y / cellSize);
+  const cz = Math.floor(camPos.z / cellSize);
+  const fx = camPos.x - cx * cellSize;
+  const fy = camPos.y - cy * cellSize;
+  const fz = camPos.z - cz * cellSize;
 
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   gl.viewport(0, 0, canvas.width, canvas.height);
@@ -637,9 +652,9 @@ function frame(ts){
   gl.clear(gl.COLOR_BUFFER_BIT);
 
   const asp  = canvas.width / canvas.height;
-  const proj = perspective(80, asp, 0.3, FAR+200);
+  const proj = perspective(80, asp, 0.3, MAX_DIST + 200);
 
-  // Skybox pass (opaque background — no blending)
+  // Skybox pass
   gl.useProgram(skyProg);
   gl.uniform1f(skyU.fovTan, Math.tan(80 * Math.PI / 360));
   gl.uniform1f(skyU.aspect, asp);
@@ -647,22 +662,23 @@ function frame(ts){
   gl.bindVertexArray(quadVAO);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-  // Stars pass (additive on top of skybox)
+  // Stars pass
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
-  const mvp  = mul(proj, viewMat);
+  const vp = mul(proj, viewMat);
 
   gl.useProgram(prog);
-  gl.uniformMatrix4fv(uMVP,    false, mvp);
-  gl.uniform1f(uWithinL,  within);
-  gl.uniform1f(uCycleL,   cycleBase);
-  gl.uniform1f(uFarL,     FAR);
-  gl.uniform1f(uSpreadL,  SPREAD);
-  gl.uniform1f(uSpeedL,   velocity);
-  gl.uniform1f(uFogL,     fog);
+  gl.uniformMatrix4fv(uVP,     false, vp);
+  gl.uniform3i(uCamCellL,  cx, cy, cz);
+  gl.uniform3f(uCamFracL,  fx, fy, fz);
+  gl.uniform1f(uCellSzL,   cellSize);
+  gl.uniform1i(uGridWL,    gridW);
+  gl.uniform1f(uMaxDistL,  MAX_DIST);
+  gl.uniform1f(uSpeedL,    velocity);
+  gl.uniform1f(uFogL,      fog);
 
   gl.bindVertexArray(emptyVAO);
-  gl.drawArrays(gl.POINTS, 0, N);
+  gl.drawArrays(gl.POINTS, 0, drawCount);
 
   gl.disable(gl.BLEND);
 }
