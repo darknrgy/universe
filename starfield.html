@@ -356,6 +356,16 @@ float fbm4(vec3 p){
   return v;
 }
 
+// Rotate noise coords to break Cartesian grid alignment on the sphere
+vec3 rotNoise(vec3 p){
+  // Fixed rotation (~37° around (1,1,1)-ish axis)
+  return vec3(
+    0.7986*p.x - 0.4473*p.y + 0.4010*p.z,
+    0.5225*p.x + 0.8425*p.y - 0.1301*p.z,
+   -0.2961*p.x + 0.3036*p.y + 0.9066*p.z
+  );
+}
+
 void main(){
   vec3 d = normalize(vRayDir);
 
@@ -402,8 +412,8 @@ void main(){
 
   // ── Small nebulae (compact, not sky-filling) ─────────────────
   // Use high-frequency noise sampled at larger scale = smaller features
-  float n1 = fbm5(d * 8.0);
-  float n2 = fbm4(d * 10.0 + 43.7);
+  float n1 = fbm5(rotNoise(d * 8.0));
+  float n2 = fbm4(rotNoise(d * 10.0 + 43.7));
 
   // Only show nebula where noise is high (sparse patches)
   float nebMask = smoothstep(0.62, 0.78, n1);  // only top ~15% of noise
@@ -412,12 +422,12 @@ void main(){
   neb += vec3(0.04, 0.01, 0.008) * smoothstep(0.68, 0.85, n2) * nebMask; // warm tint
 
   // Dust darkening within nebulae
-  float dust = smoothstep(0.5, 0.7, fbm4(d * 14.0 + 200.0));
+  float dust = smoothstep(0.5, 0.7, fbm4(rotNoise(d * 14.0 + 200.0)));
   neb *= mix(1.0, 0.3, dust * nebMask);
 
   // ── Very faint milky way band ────────────────────────────────
   float band = exp(-d.y * d.y * 8.0);
-  float mn = fbm4(d * 12.0 + 50.0) * band;
+  float mn = fbm4(rotNoise(d * 12.0 + 50.0)) * band;
   vec3  milky = vec3(0.006, 0.005, 0.009) * mn;
 
   // ── Compose — mostly black with subtle features ──────────────
@@ -428,9 +438,9 @@ void main(){
 
   // ─��� Background noise texture ────────────────────────────────────
   // Fine grain across the entire sky — gives the void subtle texture
-  float grain = vn3(d * 150.0) * 0.5
-              + vn3(d * 60.0)  * 0.3
-              + vn3(d * 25.0)  * 0.2;
+  float grain = vn3(rotNoise(d * 150.0)) * 0.5
+              + vn3(rotNoise(d * 60.0))  * 0.3
+              + vn3(rotNoise(d * 25.0))  * 0.2;
   c += vec3(0.065, 0.054, 0.076) * grain;
 
   fragColor = vec4(c, 1.0);
