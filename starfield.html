@@ -67,6 +67,16 @@ input[type=range]::-webkit-slider-thumb {
     <span class="val" id="v-lag">—</span>
   </div>
   <div class="ctrl">
+    <label>BH Rate</label>
+    <input type="range" id="s-bhrate" min="0" max="100" value="10">
+    <span class="val" id="v-bhrate">—</span>
+  </div>
+  <div class="ctrl">
+    <label>BH Size</label>
+    <input type="range" id="s-bhsize" min="0" max="100" value="50">
+    <span class="val" id="v-bhsize">—</span>
+  </div>
+  <div class="ctrl">
     <button id="b-fly" style="
       background:#0a1a2a; color:#2af; border:1px solid #1a4a6a; border-radius:4px;
       padding:6px 20px; font-family:inherit; font-size:14px; letter-spacing:2px;
@@ -125,9 +135,19 @@ function setLagLabel(){ vLag.textContent = Math.round(lagScale*100)+'%'; }
 sAtt.addEventListener('input', ()=>{ attScale=+sAtt.value/100; setAttLabel(); });
 sLag.addEventListener('input', ()=>{ lagScale=+sLag.value/100; setLagLabel(); });
 
+const sBHrate=document.getElementById('s-bhrate'), vBHrate=document.getElementById('v-bhrate');
+const sBHsize=document.getElementById('s-bhsize'), vBHsize=document.getElementById('v-bhsize');
+let bhRate = +sBHrate.value / 100;
+let bhSize = +sBHsize.value / 100;
+function setBHrateLabel(){ vBHrate.textContent = bhRate<=0?'Off':Math.round(bhRate*100)+'%'; }
+function setBHsizeLabel(){ vBHsize.textContent = Math.round(bhSize*100)+'%'; }
+sBHrate.addEventListener('input', ()=>{ bhRate=+sBHrate.value/100; setBHrateLabel(); });
+sBHsize.addEventListener('input', ()=>{ bhSize=+sBHsize.value/100; setBHsizeLabel(); });
+
 setVelLabel(); setStarLabel();
 vFog.textContent = sFog.value + '%';
 setAttLabel(); setLagLabel();
+setBHrateLabel(); setBHsizeLabel();
 
 // ── Scene constants ────────────────────────────────────────────
 const MAX_DIST = 4000.0;
@@ -441,6 +461,171 @@ function transpose4(m){
   ]);
 }
 
+// ── Lens distortion shader ─────────────────────────────────────
+const LENS_VS = `#version 300 es
+in vec2 aPos;
+out vec2 vUV;
+void main(){ gl_Position=vec4(aPos,0.0,1.0); vUV=aPos*0.5+0.5; }`;
+
+const LENS_FS = `#version 300 es
+precision highp float;
+uniform sampler2D uScene;
+uniform float uAspect;
+uniform int   uNumBH;
+uniform vec2  uBHpos[16];
+uniform float uBHre[16];
+in vec2 vUV;
+out vec4 fragColor;
+
+void main(){
+  vec2 uv = vUV;
+  float totalMag = 1.0;
+
+  for(int i=0; i<16; i++){
+    if(i >= uNumBH) break;
+    vec2 delta;
+    delta.x = (uv.x - uBHpos[i].x) * uAspect;
+    delta.y = uv.y - uBHpos[i].y;
+    float r = length(delta);
+    float re = uBHre[i];
+    if(r < re * 12.0){
+      vec2 dir = delta / max(r, re * 0.01);
+      float r_src = r - re * re / max(r, re * 0.01);
+      vec2 nd = dir * r_src;
+      nd.x /= uAspect;
+      uv = uBHpos[i] + nd;
+      float u = r / re;
+      float mag = (u*u + 2.0) / (u * sqrt(u*u + 4.0) + 0.001);
+      totalMag *= min(mag, 6.0);
+    }
+  }
+
+  vec4 col = texture(uScene, clamp(uv, 0.0, 1.0));
+  col.rgb *= totalMag;
+
+  float shadow = 1.0;
+  for(int i=0; i<16; i++){
+    if(i >= uNumBH) break;
+    vec2 d2;
+    d2.x = (vUV.x - uBHpos[i].x) * uAspect;
+    d2.y = vUV.y - uBHpos[i].y;
+    float r2 = length(d2);
+    shadow = min(shadow, smoothstep(uBHre[i]*0.1, uBHre[i]*0.4, r2));
+  }
+  col.rgb *= shadow;
+  fragColor = col;
+}`;
+
+const lensProg = gl.createProgram();
+gl.attachShader(lensProg, mkShader(gl.VERTEX_SHADER, LENS_VS));
+gl.attachShader(lensProg, mkShader(gl.FRAGMENT_SHADER, LENS_FS));
+gl.linkProgram(lensProg);
+if(!gl.getProgramParameter(lensProg, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(lensProg));
+
+const lensU = {
+  scene: gl.getUniformLocation(lensProg,'uScene'),
+  aspect: gl.getUniformLocation(lensProg,'uAspect'),
+  numBH: gl.getUniformLocation(lensProg,'uNumBH'),
+  bhPos: [], bhRe: [],
+};
+for(let i=0;i<16;i++){
+  lensU.bhPos.push(gl.getUniformLocation(lensProg,`uBHpos[${i}]`));
+  lensU.bhRe.push(gl.getUniformLocation(lensProg,`uBHre[${i}]`));
+}
+
+// ── Scene FBO ──────────────────────────────────────────────────
+let sceneTex, sceneFbo;
+function buildSceneFBO(){
+  if(sceneTex) gl.deleteTexture(sceneTex);
+  if(sceneFbo) gl.deleteFramebuffer(sceneFbo);
+  sceneTex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, sceneTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, canvas.width, canvas.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  sceneFbo = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, sceneTex, 0);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+buildSceneFBO();
+
+// ── Black hole detection via spatial hash ──────────────────────
+// BHs exist at deterministic world positions, same as stars.
+// A coarse grid (BH_CELL) is hashed — rare outcomes = black hole.
+// Each frame, scan nearby cells and project visible BHs for lensing.
+const BH_CELL = 500;   // coarse grid cell size
+const BH_SCAN = 16;    // scan ±16 cells = ±8000 units
+
+// Must exactly match GPU ihash: unsigned shifts (>>>), Math.imul, shift counts 16/15/16
+function ihashJS(x) {
+  x = x | 0;
+  x = Math.imul((x >>> 16) ^ x, 0x7feb352d);
+  x = Math.imul((x >>> 15) ^ x, 0x846ca68b);
+  x = (x >>> 16) ^ x;
+  return x >>> 0;
+}
+function rndJS(v){ return (ihashJS(v) >>> 0) / 4294967296; }
+
+const BH_PROJ_SCALE = 0.5 / Math.tan(80 * Math.PI / 360); // constant FOV factor
+
+function findBlackHoles(vpMat) {
+  const bhs = [];
+  const ccx = Math.floor(camPos.x / BH_CELL);
+  const ccy = Math.floor(camPos.y / BH_CELL);
+  const ccz = Math.floor(camPos.z / BH_CELL);
+  const cfx = camPos.x - ccx * BH_CELL;
+  const cfy = camPos.y - ccy * BH_CELL;
+  const cfz = camPos.z - ccz * BH_CELL;
+
+  const threshold = bhRate <= 0 ? 0 : Math.floor(bhRate * bhRate * 80 + 1);
+
+  for (let dz = -BH_SCAN; dz <= BH_SCAN; dz++)
+  for (let dy = -BH_SCAN; dy <= BH_SCAN; dy++)
+  for (let dx = -BH_SCAN; dx <= BH_SCAN; dx++) {
+    const wx = ccx + dx, wy = ccy + dy, wz = ccz + dz;
+    const seed = ihashJS(Math.imul(wx, 73856093) ^ Math.imul(wy, 19349663) ^ Math.imul(wz, 83492791));
+    if ((seed % 4000) >= threshold) continue;
+
+    // Position relative to camera — same formula as star vertex shader
+    const offx = rndJS(ihashJS((seed + 1) | 0)) * BH_CELL;
+    const offy = rndJS(ihashJS((seed + 2) | 0)) * BH_CELL;
+    const offz = rndJS(ihashJS((seed + 3) | 0)) * BH_CELL;
+    const rx = dx * BH_CELL + offx - cfx;
+    const ry = dy * BH_CELL + offy - cfy;
+    const rz = dz * BH_CELL + offz - cfz;
+
+    const dist = Math.sqrt(rx*rx + ry*ry + rz*rz);
+    if (dist < 1 || dist > MAX_DIST * 2.0) continue;
+
+    const baseR = 20 + (ihashJS((seed + 4) | 0) % 100);
+    const worldR = baseR * (0.2 + bhSize * 2.8);
+
+    // Project through VP — same as GPU: gl_Position = uVP * vec4(relPos, 1.0)
+    const clipx = vpMat[0]*rx + vpMat[4]*ry + vpMat[8]*rz  + vpMat[12];
+    const clipy = vpMat[1]*rx + vpMat[5]*ry + vpMat[9]*rz  + vpMat[13];
+    const clipw = vpMat[3]*rx + vpMat[7]*ry + vpMat[11]*rz + vpMat[15];
+
+    // Behind camera — skip (lensing naturally fades as BH leaves FOV)
+    if (clipw <= 0.01) continue;
+
+    const sx = clipx/clipw*0.5+0.5, sy = clipy/clipw*0.5+0.5;
+    // Smooth fade-in: effect ramps from 0 at MAX_DIST*2 to full at MAX_DIST*1.2
+    const fadeIn = Math.min(1, Math.max(0, (MAX_DIST * 2.0 - dist) / (MAX_DIST * 0.8)));
+    const screenRe = worldR / dist * BH_PROJ_SCALE * fadeIn;
+    // Generous bounds — collect ALL, sort later
+    if (screenRe > 0.0001 && Math.abs(sx-0.5) < screenRe*12.0+2.0 && Math.abs(sy-0.5) < screenRe*12.0+2.0) {
+      bhs.push({ sx, sy, re: screenRe, dist, wx, wy, wz });
+    }
+  }
+  // Keep closest 16 — prevents distant BHs from evicting nearby ones
+  bhs.sort((a, b) => a.dist - b.dist);
+  if (bhs.length > 16) bhs.length = 16;
+  return bhs;
+}
+
 const cam = { rotX:0, rotY:0 };
 let mdwn=false, lmx=0, lmy=0;
 canvas.addEventListener('contextmenu', e=>e.preventDefault());
@@ -646,15 +831,17 @@ function frame(ts){
   const fy = camPos.y - cy * cellSize;
   const fz = camPos.z - cz * cellSize;
 
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  const asp  = canvas.width / canvas.height;
+  const proj = perspective(80, asp, 0.3, MAX_DIST + 200);
+  const vp   = mul(proj, viewMat);
+
+  // ── Render scene to FBO ──────────────────────────────────────
+  gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFbo);
   gl.viewport(0, 0, canvas.width, canvas.height);
   gl.clearColor(0, 0, 0, 1);
   gl.clear(gl.COLOR_BUFFER_BIT);
 
-  const asp  = canvas.width / canvas.height;
-  const proj = perspective(80, asp, 0.3, MAX_DIST + 200);
-
-  // Skybox pass
+  // Skybox
   gl.useProgram(skyProg);
   gl.uniform1f(skyU.fovTan, Math.tan(80 * Math.PI / 360));
   gl.uniform1f(skyU.aspect, asp);
@@ -662,11 +849,9 @@ function frame(ts){
   gl.bindVertexArray(quadVAO);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-  // Stars pass
+  // Stars
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
-  const vp = mul(proj, viewMat);
-
   gl.useProgram(prog);
   gl.uniformMatrix4fv(uVP,     false, vp);
   gl.uniform3i(uCamCellL,  cx, cy, cz);
@@ -676,15 +861,31 @@ function frame(ts){
   gl.uniform1f(uMaxDistL,  MAX_DIST);
   gl.uniform1f(uSpeedL,    velocity);
   gl.uniform1f(uFogL,      fog);
-
   gl.bindVertexArray(emptyVAO);
   gl.drawArrays(gl.POINTS, 0, drawCount);
-
   gl.disable(gl.BLEND);
+
+  // ── Find black holes via spatial hash & apply lensing ────────
+  const bhs = findBlackHoles(vp);
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.useProgram(lensProg);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, sceneTex);
+  gl.uniform1i(lensU.scene, 0);
+  gl.uniform1f(lensU.aspect, asp);
+  gl.uniform1i(lensU.numBH, bhs.length);
+  for (let i = 0; i < bhs.length; i++) {
+    gl.uniform2f(lensU.bhPos[i], bhs[i].sx, bhs[i].sy);
+    gl.uniform1f(lensU.bhRe[i],  bhs[i].re);
+  }
+  gl.bindVertexArray(quadVAO);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 }
 
 requestAnimationFrame(frame);
-window.addEventListener('resize', resizeCanvas);
+window.addEventListener('resize', ()=>{ resizeCanvas(); buildSceneFBO(); });
 </script>
 </body>
 </html>
