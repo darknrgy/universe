@@ -67,6 +67,11 @@ input[type=range]::-webkit-slider-thumb {
     <span class="val" id="v-lag">—</span>
   </div>
   <div class="ctrl">
+    <label>Brightness</label>
+    <input type="range" id="s-bright" min="0" max="100" value="55">
+    <span class="val" id="v-bright">—</span>
+  </div>
+  <div class="ctrl">
     <label>BH Rate</label>
     <input type="range" id="s-bhrate" min="0" max="100" value="10">
     <span class="val" id="v-bhrate">—</span>
@@ -135,6 +140,11 @@ function setLagLabel(){ vLag.textContent = Math.round(lagScale*100)+'%'; }
 sAtt.addEventListener('input', ()=>{ attScale=+sAtt.value/100; setAttLabel(); });
 sLag.addEventListener('input', ()=>{ lagScale=+sLag.value/100; setLagLabel(); });
 
+const sBright=document.getElementById('s-bright'), vBright=document.getElementById('v-bright');
+let brightness = +sBright.value / 100;
+function setBrightLabel(){ vBright.textContent = Math.round(brightness*100)+'%'; }
+sBright.addEventListener('input', ()=>{ brightness=+sBright.value/100; setBrightLabel(); });
+
 const sBHrate=document.getElementById('s-bhrate'), vBHrate=document.getElementById('v-bhrate');
 const sBHsize=document.getElementById('s-bhsize'), vBHsize=document.getElementById('v-bhsize');
 let bhRate = +sBHrate.value / 100;
@@ -147,7 +157,7 @@ sBHsize.addEventListener('input', ()=>{ bhSize=+sBHsize.value/100; setBHsizeLabe
 setVelLabel(); setStarLabel();
 vFog.textContent = sFog.value + '%';
 setAttLabel(); setLagLabel();
-setBHrateLabel(); setBHsizeLabel();
+setBrightLabel(); setBHrateLabel(); setBHsizeLabel();
 
 // ── Scene constants ────────────────────────────────────────────
 const MAX_DIST = 4000.0;
@@ -181,6 +191,7 @@ uniform int   uGridW;       // cube root of draw count
 uniform float uMaxDist;
 uniform float uSpeed;
 uniform float uFog;
+uniform float uBright;    // star size multiplier
 
 out vec3  vColor;
 out float vAlpha;
@@ -239,7 +250,8 @@ void main(){
   gl_Position = uVP * vec4(relPos, 1.0);
 
   // Point size
-  float sz = clamp(2000.0 / dist, 0.2, 12.0);
+  float scale = 1000.0 + uBright * 4000.0;  // 1000–5000 range
+  float sz = clamp(scale / dist, 0.15 + uBright * 0.3, 6.0 + uBright * 14.0);
   sz *= 1.0 + uSpeed * 0.00005;
   gl_PointSize = sz;
   vPointSize   = sz;
@@ -311,6 +323,7 @@ const uGridWL   = gl.getUniformLocation(prog, 'uGridW');
 const uMaxDistL = gl.getUniformLocation(prog, 'uMaxDist');
 const uSpeedL   = gl.getUniformLocation(prog, 'uSpeed');
 const uFogL     = gl.getUniformLocation(prog, 'uFog');
+const uBrightL  = gl.getUniformLocation(prog, 'uBright');
 
 // ── Empty VAO — no vertex attributes, everything from gl_VertexID ─
 const emptyVAO = gl.createVertexArray();
@@ -861,6 +874,7 @@ function frame(ts){
   gl.uniform1f(uMaxDistL,  MAX_DIST);
   gl.uniform1f(uSpeedL,    velocity);
   gl.uniform1f(uFogL,      fog);
+  gl.uniform1f(uBrightL,   brightness);
   gl.bindVertexArray(emptyVAO);
   gl.drawArrays(gl.POINTS, 0, drawCount);
   gl.disable(gl.BLEND);
