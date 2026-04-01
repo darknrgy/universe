@@ -7,87 +7,68 @@
 * { margin:0; padding:0; box-sizing:border-box; }
 body { background:#000; overflow:hidden; font-family:'Courier New',monospace; user-select:none; }
 canvas { display:block; cursor:crosshair; width:100vw; height:100vh; }
-#ui {
-  position:fixed; bottom:0; left:0; right:0;
-  padding:18px 30px 22px;
-  background:linear-gradient(transparent, rgba(0,3,10,0.93));
-  display:flex; align-items:center; gap:36px; flex-wrap:wrap;
+
+/* Panel: left side, vertical, hideable */
+#panel {
+  position:fixed; top:clamp(6px,1vh,14px); left:clamp(6px,1vw,14px);
+  width:clamp(220px, 18vw, 320px);
+  background:rgba(0,0,0,0.85); border-radius:8px;
+  padding:clamp(36px,5vh,60px) clamp(10px,1.5vw,20px) clamp(12px,2vh,24px);
+  display:flex; flex-direction:column; gap:clamp(6px,1vh,14px);
+  transition:transform 0.35s ease, opacity 0.35s ease;
+  z-index:10;
 }
-.ctrl { display:flex; align-items:center; gap:12px; }
-.ctrl label { color:#2a6a8a; font-size:14px; letter-spacing:2px; text-transform:uppercase; white-space:nowrap; }
+#panel.hidden { transform:translateX(-100%); opacity:0; pointer-events:none; }
+
+#panel-tab {
+  position:fixed; top:clamp(6px,1vh,14px); left:clamp(6px,1vw,14px);
+  width:clamp(24px,3vw,36px); height:clamp(24px,3vw,36px);
+  background:rgba(0,30,60,0.5); border-radius:6px; cursor:pointer; z-index:11;
+  display:flex; align-items:center; justify-content:center;
+  color:#2a6a8a; font-size:clamp(10px,1.2vw,16px);
+  transition:background 0.2s;
+}
+#panel-tab:hover { background:rgba(0,60,120,0.7); }
+
+.ctrl { display:flex; align-items:center; gap:clamp(6px,0.8vw,12px); }
+.ctrl label {
+  color:#2a6a8a; font-size:clamp(9px,1.1vw,14px); letter-spacing:1px;
+  text-transform:uppercase; white-space:nowrap; min-width:clamp(60px,7vw,90px);
+}
 input[type=range] {
-  -webkit-appearance:none; appearance:none;
-  width:200px; height:4px; background:#0a2030; border-radius:2px; outline:none; cursor:pointer;
+  -webkit-appearance:none; appearance:none; flex:1;
+  height:clamp(2px,0.3vw,4px); background:#0a2030; border-radius:2px; outline:none; cursor:pointer;
 }
 input[type=range]::-webkit-slider-thumb {
-  -webkit-appearance:none; width:16px; height:16px;
+  -webkit-appearance:none; width:clamp(10px,1.2vw,16px); height:clamp(10px,1.2vw,16px);
   border-radius:50%; background:#1ad; cursor:pointer;
 }
-.val { color:#8f5; font-size:14px; font-weight:bold; min-width:100px; }
+.val {
+  color:#8f5; font-size:clamp(9px,1.1vw,14px); font-weight:bold;
+  min-width:clamp(50px,5vw,80px); text-align:right;
+}
+
 #hud {
-  position:fixed; top:16px; right:18px;
-  color:#1a3a2a; font-size:14px; letter-spacing:1px;
-  text-align:right; line-height:1.9; pointer-events:none;
+  position:fixed; top:clamp(8px,1.5vh,16px); right:clamp(10px,1.5vw,18px);
+  color:#1a3a2a; font-size:clamp(9px,1.1vw,14px); letter-spacing:1px;
+  text-align:right; line-height:1.9; pointer-events:none; z-index:5;
 }
 #hud b { color:#2a7a4a; }
-#hint {
-  position:fixed; top:16px; left:18px;
-  color:#0a2a1a; font-size:14px; letter-spacing:1px; line-height:2.0;
-}
 </style>
 </head>
 <body>
 <canvas id="canvas"></canvas>
 <div id="hud">FPS <b id="h-fps">—</b><br>SPEED <b id="h-spd">—</b><br>STARS <b id="h-n">—</b></div>
-<div id="hint">DRAG · rotate&nbsp;&nbsp;SCROLL · speed<br>SPACE · pause&nbsp;&nbsp;&nbsp;&nbsp;R · reset view</div>
-<div id="ui">
-  <div class="ctrl">
-    <label>Velocity</label>
-    <input type="range" id="s-vel" min="0" max="100" value="59">
-    <span class="val" id="v-vel">—</span>
-  </div>
-  <div class="ctrl">
-    <label>Stars</label>
-    <input type="range" id="s-stars" min="0" max="100" value="80">
-    <span class="val" id="v-stars">—</span>
-  </div>
-  <div class="ctrl">
-    <label>Fog</label>
-    <input type="range" id="s-fog" min="0" max="100" value="0">
-    <span class="val" id="v-fog">—</span>
-  </div>
-  <div class="ctrl">
-    <label>Attitude</label>
-    <input type="range" id="s-att" min="0" max="100" value="40">
-    <span class="val" id="v-att">—</span>
-  </div>
-  <div class="ctrl">
-    <label>Lag</label>
-    <input type="range" id="s-lag" min="0" max="100" value="30">
-    <span class="val" id="v-lag">—</span>
-  </div>
-  <div class="ctrl">
-    <label>Brightness</label>
-    <input type="range" id="s-bright" min="0" max="100" value="55">
-    <span class="val" id="v-bright">—</span>
-  </div>
-  <div class="ctrl">
-    <label>BH Rate</label>
-    <input type="range" id="s-bhrate" min="0" max="100" value="10">
-    <span class="val" id="v-bhrate">—</span>
-  </div>
-  <div class="ctrl">
-    <label>BH Size</label>
-    <input type="range" id="s-bhsize" min="0" max="100" value="50">
-    <span class="val" id="v-bhsize">—</span>
-  </div>
-  <div class="ctrl">
-    <button id="b-fly" style="
-      background:#0a1a2a; color:#2af; border:1px solid #1a4a6a; border-radius:4px;
-      padding:6px 20px; font-family:inherit; font-size:14px; letter-spacing:2px;
-      cursor:pointer; text-transform:uppercase; transition:all 0.2s;
-    ">FLY</button>
-  </div>
+<div id="panel-tab">&#9654;</div>
+<div id="panel">
+  <div class="ctrl"><label>Velocity</label><input type="range" id="s-vel" min="0" max="100" value="59"><span class="val" id="v-vel">—</span></div>
+  <div class="ctrl"><label>Stars</label><input type="range" id="s-stars" min="0" max="100" value="80"><span class="val" id="v-stars">—</span></div>
+  <div class="ctrl"><label>Brightness</label><input type="range" id="s-bright" min="0" max="100" value="55"><span class="val" id="v-bright">—</span></div>
+  <div class="ctrl"><label>Fog</label><input type="range" id="s-fog" min="0" max="100" value="0"><span class="val" id="v-fog">—</span></div>
+  <div class="ctrl"><label>Attitude</label><input type="range" id="s-att" min="0" max="100" value="40"><span class="val" id="v-att">—</span></div>
+  <div class="ctrl"><label>Lag</label><input type="range" id="s-lag" min="0" max="100" value="30"><span class="val" id="v-lag">—</span></div>
+  <div class="ctrl"><label>BH Rate</label><input type="range" id="s-bhrate" min="0" max="100" value="10"><span class="val" id="v-bhrate">—</span></div>
+  <div class="ctrl"><label>BH Size</label><input type="range" id="s-bhsize" min="0" max="100" value="50"><span class="val" id="v-bhsize">—</span></div>
 </div>
 <script>
 'use strict';
@@ -639,18 +620,14 @@ function findBlackHoles(vpMat) {
   return bhs;
 }
 
-const cam = { rotX:0, rotY:0 };
-let mdwn=false, lmx=0, lmy=0;
-canvas.addEventListener('contextmenu', e=>e.preventDefault());
-canvas.addEventListener('mousedown',   e=>{ mdwn=true; lmx=e.clientX; lmy=e.clientY; });
-window.addEventListener('mouseup',     ()=>mdwn=false);
-window.addEventListener('mousemove',   e=>{
-  if (!mdwn) return;
-  cam.rotY += (e.clientX-lmx)*0.004;
-  cam.rotX += (e.clientY-lmy)*0.003;
-  cam.rotX  = Math.max(-1.5, Math.min(1.5, cam.rotX));
-  lmx=e.clientX; lmy=e.clientY;
+// ── Panel toggle ───────────────────────────────────────────────
+const panel = document.getElementById('panel');
+const panelTab = document.getElementById('panel-tab');
+panelTab.addEventListener('click', ()=>{
+  panel.classList.toggle('hidden');
+  panelTab.innerHTML = panel.classList.contains('hidden') ? '&#9654;' : '&#9664;';
 });
+
 canvas.addEventListener('wheel', e=>{
   e.preventDefault();
   const step = (+sVel.max - +sVel.min) * 0.04;
@@ -660,7 +637,6 @@ canvas.addEventListener('wheel', e=>{
 let paused=false;
 window.addEventListener('keydown', e=>{
   if (e.code==='Space'){ e.preventDefault(); paused=!paused; }
-  if (e.code==='KeyR'){ cam.rotX=0; cam.rotY=0; }
 });
 
 // ── Mat4 ───────────────────────────────────────────────────────
@@ -706,7 +682,6 @@ function fbm(t, seed){
 }
 
 // ── Flight dynamics ────────────────────────────────────────────
-let flyMode = false;
 let flyTime = 0;
 
 // Attitude = where the ship's nose points
@@ -781,25 +756,6 @@ function updateFlight(dt) {
 }
 
 // ── Fly mode toggle ────────────────────────────────────────────
-const bFly = document.getElementById('b-fly');
-bFly.addEventListener('click', () => {
-  flyMode = !flyMode;
-  bFly.style.background = flyMode ? '#1a4a1a' : '#0a1a2a';
-  bFly.style.color      = flyMode ? '#4f4'    : '#2af';
-  bFly.style.borderColor= flyMode ? '#2a6a2a' : '#1a4a6a';
-  bFly.textContent      = flyMode ? 'FLYING'  : 'FLY';
-  if (flyMode) {
-    // Reset flight state
-    flyTime = 0;
-    att.p=att.y=att.r=0; attV.p=attV.y=attV.r=0;
-    trj.p=trj.y=trj.r=0; trjV.p=trjV.y=trjV.r=0;
-  } else {
-    cam.rotX=0; cam.rotY=0;
-  }
-});
-
-// Start in fly mode by default
-bFly.click();
 
 // ── Render loop ────────────────────────────────────────────────
 function frame(ts){
@@ -818,18 +774,12 @@ function frame(ts){
   let speedMult = 1.0;
   let viewMat;
 
-  if (flyMode) {
-    if (!paused) speedMult = updateFlight(dt);
-
-    // View follows trajectory (lagged) — you SEE the delay and bounce
-    viewMat = mul(rZ(trj.r), mul(rX(trj.p), rY(trj.y)));
-  } else {
-    viewMat = mul(rX(cam.rotX), rY(cam.rotY));
-  }
+  if (!paused) speedMult = updateFlight(dt);
+  viewMat = mul(rZ(trj.r), mul(rX(trj.p), rY(trj.y)));
 
   // Move camera through 3D space along its forward direction
   if (!paused) {
-    const fwd = flyMode ? forwardDir(trj.p, trj.y) : forwardDir(cam.rotX, cam.rotY);
+    const fwd = forwardDir(trj.p, trj.y);
     const spd = velocity * speedMult;
     camPos.x += fwd.x * spd * dt;
     camPos.y += fwd.y * spd * dt;
