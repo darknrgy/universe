@@ -371,25 +371,32 @@ void main(){
     float szHi   = (layer == 0) ? 0.04  : 0.018;
     vec3  offset  = (layer == 0) ? vec3(0.0) : vec3(7.31, 3.17, 5.43);
 
-    vec3  gg = floor(d * gridSz + offset);
-    float gh = h31(gg);
-    if(gh > thresh){
-      vec3 gcenter = (gg + vec3(h31(gg+1.0), h31(gg+2.0), h31(gg+3.0))) / gridSz;
-      gcenter = normalize(gcenter);
-      float dist = acos(clamp(dot(d, gcenter), -1.0, 1.0));
-      float size = szLo + h31(gg+4.0) * (szHi - szLo);
-      float glow = exp(-dist*dist / (size*size));
-      // Elongation — stretch some galaxies slightly
-      float elongate = 0.7 + h31(gg+6.0) * 0.6;
-      glow = max(glow, exp(-dist*dist / (size*size*elongate)) * 0.7);
-      float bright = (gh - thresh) / (1.0 - thresh) * bMul;
-      // Color: warm ellipticals, cool spirals, pale irregulars
-      float gt = h31(gg+5.0);
-      vec3 gcol;
-      if(gt < 0.35)     gcol = vec3(1.0, 0.92, 0.78);  // elliptical
-      else if(gt < 0.7) gcol = vec3(0.80, 0.85, 1.0);   // spiral
-      else               gcol = vec3(0.88, 0.86, 0.92);  // irregular
-      galCol += gcol * glow * bright;
+    vec3  base = d * gridSz + offset;
+    vec3  gg0 = floor(base);
+    // Check 2x2x2 neighborhood to eliminate grid seams
+    for(int nz=0; nz<=1; nz++)
+    for(int ny=0; ny<=1; ny++)
+    for(int nx=0; nx<=1; nx++){
+      vec3 gg = gg0 + vec3(float(nx), float(ny), float(nz));
+      float gh = h31(gg);
+      if(gh > thresh){
+        vec3 gcenter = (gg + vec3(h31(gg+1.0), h31(gg+2.0), h31(gg+3.0))) / gridSz;
+        gcenter = normalize(gcenter);
+        float dist = acos(clamp(dot(d, gcenter), -1.0, 1.0));
+        float size = szLo + h31(gg+4.0) * (szHi - szLo);
+        float glow = exp(-dist*dist / (size*size));
+        // Elongation — stretch some galaxies slightly
+        float elongate = 0.7 + h31(gg+6.0) * 0.6;
+        glow = max(glow, exp(-dist*dist / (size*size*elongate)) * 0.7);
+        float bright = (gh - thresh) / (1.0 - thresh) * bMul;
+        // Color: warm ellipticals, cool spirals, pale irregulars
+        float gt = h31(gg+5.0);
+        vec3 gcol;
+        if(gt < 0.35)     gcol = vec3(1.0, 0.92, 0.78);  // elliptical
+        else if(gt < 0.7) gcol = vec3(0.80, 0.85, 1.0);   // spiral
+        else               gcol = vec3(0.88, 0.86, 0.92);  // irregular
+        galCol += gcol * glow * bright;
+      }
     }
   }
 
