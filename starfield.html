@@ -993,8 +993,8 @@ function frame(ts){
   const proj = perspective(80, asp, 0.3, MAX_DIST + 200);
   const vp   = mul(proj, viewMat);
 
-  // ── Render scene to FBO ──────────────────────────────────────
-  gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFbo);
+  // ── Render directly to screen (BH/nebula disabled) ───────────
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   gl.viewport(0, 0, canvas.width, canvas.height);
   gl.clearColor(0, 0, 0, 1);
   gl.clear(gl.COLOR_BUFFER_BIT);
@@ -1023,40 +1023,6 @@ function frame(ts){
   gl.bindVertexArray(emptyVAO);
   gl.drawArrays(gl.POINTS, 0, drawCount);
   gl.disable(gl.BLEND);
-
-  // ── Find black holes & nebulae via spatial hash ───────────────
-  const bhs  = findBlackHoles(vp);
-  const nebs = updateNebulae(dt);
-
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  gl.viewport(0, 0, canvas.width, canvas.height);
-  gl.useProgram(lensProg);
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, sceneTex);
-  gl.uniform1i(lensU.scene, 0);
-  gl.uniform1f(lensU.aspect, asp);
-  gl.uniform1f(lensU.fovTan, Math.tan(80 * Math.PI / 360));
-  gl.uniformMatrix4fv(lensU.invView, false, transpose4(viewMat));
-
-  // Black holes
-  gl.uniform1i(lensU.numBH, bhs.length);
-  for (let i = 0; i < bhs.length; i++) {
-    gl.uniform2f(lensU.bhPos[i], bhs[i].sx, bhs[i].sy);
-    gl.uniform1f(lensU.bhRe[i],  bhs[i].re);
-  }
-
-  // Nebulae
-  gl.uniform1i(lensU.numNeb, nebs.length);
-  for (let i = 0; i < nebs.length; i++) {
-    gl.uniform3f(lensU.nebPos[i],    nebs[i].rx, nebs[i].ry, nebs[i].rz);
-    gl.uniform1f(lensU.nebRadius[i], nebs[i].radius);
-    gl.uniform3f(lensU.nebColor[i],  nebs[i].color[0], nebs[i].color[1], nebs[i].color[2]);
-    gl.uniform1f(lensU.nebSeed[i],   nebs[i].seed);
-    gl.uniform1f(lensU.nebAlpha[i],  nebs[i].alpha);
-  }
-
-  gl.bindVertexArray(quadVAO);
-  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 }
 
 requestAnimationFrame(frame);
