@@ -479,6 +479,7 @@ uniform vec3  uNebPos[6];    // camera-relative world position
 uniform float uNebRadius[6]; // world radius
 uniform vec3  uNebColor[6];  // RGB
 uniform float uNebSeed[6];
+uniform float uNebAlpha[6];  // per-nebula fade factor
 
 in vec2 vUV;
 out vec4 fragColor;
@@ -585,10 +586,10 @@ void main(){
           wisp * 0.12
         );
 
-        // Distance fade (gentle, fixed range — JS fadeIn handles pop-in)
+        // Very gradual distance fade — nebulae appear as faint wisps from far away
         float ndist = length(nebRel);
-        float distFade = 1.0 - smoothstep(2000.0, 5000.0, ndist);
-        alpha *= distFade;
+        float distFade = 1.0 - smoothstep(1500.0, 10000.0, ndist);
+        alpha *= distFade * uNebAlpha[i];
 
         col.rgb += uNebColor[i] * alpha;
       }
@@ -623,6 +624,8 @@ for(let i=0;i<6;i++){
   lensU.nebRadius.push(gl.getUniformLocation(lensProg,`uNebRadius[${i}]`));
   lensU.nebColor.push(gl.getUniformLocation(lensProg,`uNebColor[${i}]`));
   lensU.nebSeed.push(gl.getUniformLocation(lensProg,`uNebSeed[${i}]`));
+  lensU.nebAlpha = lensU.nebAlpha || [];
+  lensU.nebAlpha.push(gl.getUniformLocation(lensProg,`uNebAlpha[${i}]`));
 }
 
 // ── Scene FBO ──────────────────────────────────────────────────
@@ -720,7 +723,7 @@ function findBlackHoles(vpMat) {
 
 // ── Nebula detection (spatial hash, same approach as BHs) ──────
 const NEB_CELL = 1200;
-const NEB_SCAN = 10;
+const NEB_SCAN = 12;  // 12 * 1200 = 14400, covers detection range
 const NEB_PALETTES = [
   [0.25, 0.08, 0.45],  // purple emission
   [0.45, 0.08, 0.08],  // red HII region
@@ -730,8 +733,12 @@ const NEB_PALETTES = [
   [0.35, 0.20, 0.08],  // gold/warm
 ];
 
-function findNebulae() {
-  const nebs = [];
+// Persistent nebula tracking — alpha ramps up/down to prevent pop
+const activeNebs = {};  // keyed by "wx,wy,wz", value = {alpha, radius, color, seed, ...}
+const NEB_FADE_IN  = 0.4;  // alpha per second ramp up
+const NEB_FADE_OUT = 0.6;  // alpha per second ramp down
+
+function updateNebulae(dt) {
   const ccx = Math.floor(camPos.x / NEB_CELL);
   const ccy = Math.floor(camPos.y / NEB_CELL);
   const ccz = Math.floor(camPos.z / NEB_CELL);
@@ -739,13 +746,14 @@ function findNebulae() {
   const cfy = camPos.y - ccy * NEB_CELL;
   const cfz = camPos.z - ccz * NEB_CELL;
 
+  // Find all nebulae in range
+  const found = {};
   for (let dz = -NEB_SCAN; dz <= NEB_SCAN; dz++)
   for (let dy = -NEB_SCAN; dy <= NEB_SCAN; dy++)
   for (let dx = -NEB_SCAN; dx <= NEB_SCAN; dx++) {
     const wx = ccx+dx, wy = ccy+dy, wz = ccz+dz;
     const seed = ihashJS(Math.imul(wx, 48611) ^ Math.imul(wy, 96293) ^ Math.imul(wz, 71471));
-    // Every cell has a nebula
-    if (false) continue;
+    if ((seed % 3) >= 1) continue;  // ~1 in 3 cells
 
     const offx = rndJS(ihashJS((seed+1)|0)) * NEB_CELL;
     const offy = rndJS(ihashJS((seed+2)|0)) * NEB_CELL;
@@ -753,28 +761,46 @@ function findNebulae() {
     const rx = dx * NEB_CELL + offx - cfx;
     const ry = dy * NEB_CELL + offy - cfy;
     const rz = dz * NEB_CELL + offz - cfz;
-
     const dist = Math.sqrt(rx*rx + ry*ry + rz*rz);
+    if (dist > 10000) continue;
+
+    const key = `${wx},${wy},${wz}`;
     const radius = 30 + (ihashJS((seed+4)|0) % 120);
-    if (dist > radius * 18) continue;
-
-    // Smooth fade in over a wide range — no pop
-    const fadeIn = Math.min(1, Math.max(0, (radius * 18 - dist) / (radius * 8)));
-
-    // Color palette from hash
     const palIdx = ihashJS((seed+5)|0) % NEB_PALETTES.length;
-    const pal = NEB_PALETTES[palIdx];
-
-    nebs.push({
-      rx, ry, rz, dist,
-      radius: radius * fadeIn,
-      color: pal,
+    found[key] = {
+      rx, ry, rz, dist, radius,
+      color: NEB_PALETTES[palIdx],
       seed: rndJS(ihashJS((seed+6)|0))
-    });
+    };
   }
-  nebs.sort((a, b) => a.dist - b.dist);
-  if (nebs.length > 6) nebs.length = 6;
-  return nebs;
+
+  // Ramp in new nebulae, update existing
+  for (const key in found) {
+    if (activeNebs[key]) {
+      // Update position (camera moved) and ramp alpha up
+      const a = activeNebs[key];
+      const f = found[key];
+      a.rx = f.rx; a.ry = f.ry; a.rz = f.rz; a.dist = f.dist;
+      a.alpha = Math.min(1.0, a.alpha + NEB_FADE_IN * dt);
+    } else {
+      // New nebula — start at alpha 0
+      activeNebs[key] = { ...found[key], alpha: 0.0 };
+    }
+  }
+
+  // Ramp out nebulae no longer in range
+  for (const key in activeNebs) {
+    if (!found[key]) {
+      activeNebs[key].alpha -= NEB_FADE_OUT * dt;
+      if (activeNebs[key].alpha <= 0) delete activeNebs[key];
+    }
+  }
+
+  // Collect for rendering: sort by distance, take closest 6
+  const result = Object.values(activeNebs).filter(n => n.alpha > 0.001);
+  result.sort((a, b) => a.dist - b.dist);
+  if (result.length > 6) result.length = 6;
+  return result;
 }
 
 // ── Panel toggle ───────────────────────────────────────────────
@@ -999,7 +1025,7 @@ function frame(ts){
 
   // ── Find black holes & nebulae via spatial hash ───────────────
   const bhs  = findBlackHoles(vp);
-  const nebs = findNebulae();
+  const nebs = updateNebulae(dt);
 
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   gl.viewport(0, 0, canvas.width, canvas.height);
@@ -1025,6 +1051,7 @@ function frame(ts){
     gl.uniform1f(lensU.nebRadius[i], nebs[i].radius);
     gl.uniform3f(lensU.nebColor[i],  nebs[i].color[0], nebs[i].color[1], nebs[i].color[2]);
     gl.uniform1f(lensU.nebSeed[i],   nebs[i].seed);
+    gl.uniform1f(lensU.nebAlpha[i],  nebs[i].alpha);
   }
 
   gl.bindVertexArray(quadVAO);
