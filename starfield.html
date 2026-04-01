@@ -777,11 +777,12 @@ function updateNebulae(dt) {
   // Ramp in new nebulae, update existing
   for (const key in found) {
     if (activeNebs[key]) {
-      // Update position (camera moved) and ramp alpha up
+      // Update position (camera moved) and ramp alpha toward distance-based target
       const a = activeNebs[key];
       const f = found[key];
       a.rx = f.rx; a.ry = f.ry; a.rz = f.rz; a.dist = f.dist;
-      a.alpha = Math.min(1.0, a.alpha + NEB_FADE_IN * dt);
+      const target = Math.max(0, Math.min(1, 1.0 - (f.dist - 1500) / 8500));
+      a.alpha = Math.min(target, a.alpha + NEB_FADE_IN * dt);
     } else {
       // New nebula — start at alpha 0
       activeNebs[key] = { ...found[key], alpha: 0.0 };
