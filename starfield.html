@@ -490,6 +490,7 @@ uniform float uNebRadius[6]; // world radius
 uniform vec3  uNebColor[6];  // RGB
 uniform float uNebSeed[6];
 uniform float uNebAlpha[6];  // per-nebula fade factor
+uniform float uFog;
 
 in vec2 vUV;
 out vec4 fragColor;
@@ -598,10 +599,13 @@ void main(){
 
         // Very gradual distance fade — nebulae appear as faint wisps from far away
         float ndist = length(nebRel);
-        float distFade = 1.0 - smoothstep(1500.0, 10000.0, ndist);
-        alpha *= distFade * uNebAlpha[i];
+        float distFade = 1.0 - smoothstep(1500.0, 20000.0, ndist);
+        float fogFade = exp(-uFog * 6.0 / 20000.0 * ndist);
+        alpha *= distFade * fogFade * uNebAlpha[i];
 
-        col.rgb += uNebColor[i] * alpha;
+        // Dust absorption — darken stars behind the nebula
+        float dust = min(alpha * 2.0, 1.0);
+        col.rgb = col.rgb * (1.0 - dust) + uNebColor[i] * alpha;
       }
     }
   }
@@ -623,6 +627,7 @@ const lensU = {
   numBH:   gl.getUniformLocation(lensProg,'uNumBH'),
   bhPos: [], bhRe: [],
   numNeb:  gl.getUniformLocation(lensProg,'uNumNeb'),
+  fog:     gl.getUniformLocation(lensProg,'uFog'),
   nebPos: [], nebRadius: [], nebColor: [], nebSeed: [],
 };
 for(let i=0;i<16;i++){
@@ -733,7 +738,7 @@ function findBlackHoles(vpMat) {
 
 // ── Nebula detection (spatial hash, same approach as BHs) ──────
 const NEB_CELL = 1200;
-const NEB_SCAN = 12;  // 12 * 1200 = 14400, covers detection range
+const NEB_SCAN = 20;  // 20 * 1200 = 24000, covers detection range
 const NEB_PALETTES = [
   [0.25, 0.08, 0.45],  // purple emission
   [0.45, 0.08, 0.08],  // red HII region
@@ -772,7 +777,7 @@ function updateNebulae(dt) {
     const ry = dy * NEB_CELL + offy - cfy;
     const rz = dz * NEB_CELL + offz - cfz;
     const dist = Math.sqrt(rx*rx + ry*ry + rz*rz);
-    if (dist > 10000) continue;
+    if (dist > 20000) continue;
 
     const key = `${wx},${wy},${wz}`;
     const radius = 30 + (ihashJS((seed+4)|0) % 120);
@@ -791,7 +796,7 @@ function updateNebulae(dt) {
       const a = activeNebs[key];
       const f = found[key];
       a.rx = f.rx; a.ry = f.ry; a.rz = f.rz; a.dist = f.dist;
-      const target = Math.max(0, Math.min(1, 1.0 - (f.dist - 1500) / 8500));
+      const target = Math.max(0, Math.min(1, 1.0 - (f.dist - 1500) / 18500));
       a.alpha = Math.min(target, a.alpha + NEB_FADE_IN * dt);
     } else {
       // New nebula — start at alpha 0
@@ -1050,6 +1055,7 @@ function frame(ts){
   gl.uniformMatrix4fv(lensU.invView, false, transpose4(viewMat));
 
   // Black holes
+  gl.uniform1f(lensU.fog, fog);
   gl.uniform1i(lensU.numBH, bhs.length);
   for (let i = 0; i < bhs.length; i++) {
     gl.uniform2f(lensU.bhPos[i], bhs[i].sx, bhs[i].sy);
