@@ -6,7 +6,7 @@
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 body { background:#000; overflow:hidden; font-family:'Courier New',monospace; user-select:none; }
-canvas { display:block; cursor:crosshair; width:100vw; height:100vh; }
+canvas { display:block; cursor:default; width:100vw; height:100vh; }
 
 /* Panel: left side, vertical, hideable */
 #panel {
@@ -657,9 +657,10 @@ function rZ(a){ const c=Math.cos(a),s=Math.sin(a); return new Float32Array([c,s,
 const camPos = { x: 0, y: 0, z: 0 };
 
 function forwardDir(pitch, yaw) {
+  // Must match the -Z axis of rX(pitch) * rY(yaw) view matrix
   return {
-    x: -Math.sin(yaw) * Math.cos(pitch),
-    y:  Math.sin(pitch),
+    x:  Math.sin(yaw) * Math.cos(pitch),
+    y: -Math.sin(pitch),
     z: -Math.cos(yaw) * Math.cos(pitch)
   };
 }
@@ -709,45 +710,53 @@ function updateFlight(dt) {
   // ── Procedural joystick (layered noise, scaled by attitude slider) ──
   // attScale 0→1 maps joystick strength from gentle to dramatic
   const jStr = 0.05 + attScale * 0.55;  // 0.05–0.6
-  const jP = fbm(flyTime, 100) * jStr;
-  const jY = fbm(flyTime, 200) * jStr * 1.2;
-  const jR = fbm(flyTime, 300) * jStr * 0.9;
+  const jP = fbm(flyTime, 100) * jStr * 4.0;
+  const jY = fbm(flyTime, 200) * jStr * 4.8;
+  const jR = fbm(flyTime, 300) * jStr * 0.3;
 
-  // ── Attitude response to joystick (smooth, rate-limited) ───────
-  attV.p += (jP * FLY.maxRate - attV.p) * FLY.attSmooth * dt;
-  attV.y += (jY * FLY.maxRate - attV.y) * FLY.attSmooth * dt;
+  // ── Attitude response — lag slider controls the entire smoothing chain ──
+  // lagScale 0: attitude snaps to joystick input, trajectory = attitude (zero sliding)
+  // lagScale 1: attitude responds slowly, trajectory lags further with bounce
+  const attResp = 2.0 + (1.0 - lagScale) * 30.0;  // 32 (snappy) → 2 (sluggish)
+
+  attV.p += (jP * FLY.maxRate - attV.p) * attResp * dt;
+  attV.y += (jY * FLY.maxRate - attV.y) * attResp * dt;
 
   // Coordinated turn: auto-bank into yaw direction
-  const coordRoll = -attV.y * FLY.coordTurn;
+  const coordRoll = -attV.y * FLY.coordTurn * 0.15;
   const desiredRollRate = (jR * FLY.maxRate * 0.3 + coordRoll);
-  attV.r += (desiredRollRate - attV.r) * FLY.attSmooth * 1.5 * dt;
+  attV.r += (desiredRollRate - attV.r) * attResp * 1.5 * dt;
 
   att.p += attV.p * dt;
   att.y += attV.y * dt;
   att.r += attV.r * dt;
 
-  // All axes spring back toward forward (-z) — prevents drifting away
-  const CENTER_PULL = 0.6;  // strength of re-centering force
+  // Center pull also scales with lag — less pull at low lag for snappy feel
+  const CENTER_PULL = 0.2 + lagScale * 0.6;
   att.p -= att.p * CENTER_PULL * dt;
   att.y -= att.y * CENTER_PULL * dt;
-  att.r -= att.r * CENTER_PULL * 0.4 * dt;  // roll re-centers more gently
+  att.r -= att.r * CENTER_PULL * 0.4 * dt;
 
-  // Hard clamp — scales with attitude slider (max ~16.8 rad at full)
+  // Hard clamp
   const MAX_ANG = 1.0 + attScale * 15.8;
   att.p = Math.max(-MAX_ANG, Math.min(MAX_ANG, att.p));
   att.y = Math.max(-MAX_ANG, Math.min(MAX_ANG, att.y));
   att.r = Math.max(-MAX_ANG, Math.min(MAX_ANG, att.r));
 
-  // ── Trajectory follows attitude via spring-damper ──────────────
-  // lagScale: 0 = instant tracking, 1 = very loose and bouncy
-  // Spring gets weaker and damping drops (more underdamped) with more lag
-  const curSpring = 12.0 - lagScale * 11.0;   // 12 (stiff) → 1 (loose)
-  const curDamp   = 4.0  - lagScale * 3.2;    // 4 (overdamped) → 0.8 (bouncy)
-  for (const a of ['p','y','r']) {
-    const err   = att[a] - trj[a];
-    const force = curSpring * err - curDamp * trjV[a];
-    trjV[a] += force * dt;
-    trj[a]  += trjV[a] * dt;
+  // ── Trajectory follows attitude ────────────────────────────────
+  // lagScale 0: instant snap. lagScale 1: loose spring with bounce.
+  if (lagScale < 0.05) {
+    for (const a of ['p','y','r']) { trj[a] = att[a]; trjV[a] = 0; }
+  } else {
+    const curSpring = 0.25 / (lagScale * lagScale);
+    const critDamp  = 2.0 * Math.sqrt(curSpring);
+    const curDamp   = critDamp * (1.0 - lagScale * 0.65);
+    for (const a of ['p','y','r']) {
+      const err   = att[a] - trj[a];
+      const force = curSpring * err - curDamp * trjV[a];
+      trjV[a] += force * dt;
+      trj[a]  += trjV[a] * dt;
+    }
   }
 
   // ── Speed reduction from turn rate ─────────────────────────────
@@ -775,7 +784,9 @@ function frame(ts){
   let viewMat;
 
   if (!paused) speedMult = updateFlight(dt);
-  viewMat = mul(rZ(trj.r), mul(rX(trj.p), rY(trj.y)));
+  // View follows attitude (where the nose points)
+  // Movement follows trajectory (which lags behind — causing the slide)
+  viewMat = mul(rZ(att.r), mul(rX(att.p), rY(att.y)));
 
   // Move camera through 3D space along its forward direction
   if (!paused) {
