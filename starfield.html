@@ -896,7 +896,7 @@ function updateFlight(dt) {
   const t = flyTime * 0.5;  // half-speed evolution
   const jP = fbm(t, 100) * jStr * 12.0;
   const jY = fbm(t, 200) * jStr * 14.4;
-  const jR = fbm(t, 300) * jStr * 7.0;
+  const jR = fbm(t, 300) * jStr * 3.0;
 
   // ── Attitude response — lag slider controls the entire smoothing chain ──
   // lagScale 0: attitude snaps to joystick input, trajectory = attitude (zero sliding)
