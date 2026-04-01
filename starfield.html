@@ -892,10 +892,11 @@ function updateFlight(dt) {
 
   // ── Procedural joystick (layered noise, scaled by attitude slider) ──
   // attScale 0→1 maps joystick strength from gentle to dramatic
-  const jStr = 0.05 + attScale * 0.55;  // 0.05–0.6
-  const jP = fbm(flyTime, 100) * jStr * 4.0;
-  const jY = fbm(flyTime, 200) * jStr * 4.8;
-  const jR = fbm(flyTime, 300) * jStr * 0.3;
+  const jStr = 0.05 + attScale * 1.15;  // 0.05–1.2
+  const t = flyTime * 0.5;  // half-speed evolution
+  const jP = fbm(t, 100) * jStr * 4.0;
+  const jY = fbm(t, 200) * jStr * 4.8;
+  const jR = fbm(t, 300) * jStr * 0.3;
 
   // ── Attitude response — lag slider controls the entire smoothing chain ──
   // lagScale 0: attitude snaps to joystick input, trajectory = attitude (zero sliding)
