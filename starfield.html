@@ -85,7 +85,7 @@ const gl = canvas.getContext('webgl2', { antialias:false, alpha:false });
 if (!gl) { alert('WebGL2 required'); throw 0; }
 
 // ── Sliders — log scale ────────────────────────────────────────
-const VEL_MIN=1,    VEL_MAX=15000;
+const VEL_MIN=1,    VEL_MAX=30000;
 const STR_MIN=1000, STR_MAX=50000000;   // 1k – 50M
 
 function logVal(raw, lo, hi){
@@ -896,7 +896,7 @@ function updateFlight(dt) {
   const t = flyTime * 0.5;  // half-speed evolution
   const jP = fbm(t, 100) * jStr * 12.0;
   const jY = fbm(t, 200) * jStr * 14.4;
-  const jR = fbm(t, 300) * jStr * 0.3;
+  const jR = fbm(t, 300) * jStr * 3.0;
 
   // ── Attitude response — lag slider controls the entire smoothing chain ──
   // lagScale 0: attitude snaps to joystick input, trajectory = attitude (zero sliding)
