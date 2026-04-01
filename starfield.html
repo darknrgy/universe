@@ -231,8 +231,8 @@ void main(){
   gl_Position = uVP * vec4(relPos, 1.0);
 
   // Point size
-  float scale = 1000.0 + uBright * 4000.0;  // 1000–5000 range
-  float sz = clamp(scale / dist, 0.15 + uBright * 0.3, 6.0 + uBright * 14.0);
+  float scale = 1000.0 + uBright * 19000.0;  // 1000–20000 range
+  float sz = clamp(scale / dist, 0.15 + uBright * 0.6, 6.0 + uBright * 74.0);
   sz *= 1.0 + uSpeed * 0.00005;
   gl_PointSize = sz;
   vPointSize   = sz;
@@ -240,7 +240,7 @@ void main(){
   // Alpha: distance fade + fog
   float farFade  = 1.0 - smoothstep(uMaxDist * 0.7, uMaxDist, dist);
   float nearFade = smoothstep(0.3, 2.5, dist);
-  float fogFade  = exp(-uFog * 3.0 / uMaxDist * dist);
+  float fogFade  = exp(-uFog * 6.0 / uMaxDist * dist);
   vAlpha = clamp(farFade * nearFade * fogFade, 0.0, 1.0);
 
   // Spectral colour from world-cell hash
@@ -894,8 +894,8 @@ function updateFlight(dt) {
   // attScale 0→1 maps joystick strength from gentle to dramatic
   const jStr = 0.05 + attScale * 1.15;  // 0.05–1.2
   const t = flyTime * 0.5;  // half-speed evolution
-  const jP = fbm(t, 100) * jStr * 4.0;
-  const jY = fbm(t, 200) * jStr * 4.8;
+  const jP = fbm(t, 100) * jStr * 12.0;
+  const jY = fbm(t, 200) * jStr * 14.4;
   const jR = fbm(t, 300) * jStr * 0.3;
 
   // ── Attitude response — lag slider controls the entire smoothing chain ──
