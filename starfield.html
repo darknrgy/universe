@@ -72,6 +72,13 @@ input[type=range]::-webkit-slider-thumb {
   <div class="ctrl"><label>Lag</label><input type="range" id="s-lag" min="0" max="100" value="50"><span class="val" id="v-lag">—</span></div>
   <div class="ctrl"><label>BH Rate</label><input type="range" id="s-bhrate" min="0" max="100" value="15"><span class="val" id="v-bhrate">—</span></div>
   <div class="ctrl"><label>BH Size</label><input type="range" id="s-bhsize" min="0" max="100" value="50"><span class="val" id="v-bhsize">—</span></div>
+  <div class="ctrl" style="margin-top:4px">
+    <button id="btn-bh" style="flex:1;padding:4px;background:#0a2030;color:#1ad;border:1px solid #1a4a6a;border-radius:4px;cursor:pointer;font-family:inherit;font-size:clamp(9px,1.1vw,13px);letter-spacing:1px">BH ON</button>
+    <button id="btn-neb" style="flex:1;padding:4px;background:#0a2030;color:#1ad;border:1px solid #1a4a6a;border-radius:4px;cursor:pointer;font-family:inherit;font-size:clamp(9px,1.1vw,13px);letter-spacing:1px">NEB ON</button>
+  </div>
+  <div class="ctrl" style="margin-top:4px">
+    <button id="btn-reset" style="flex:1;padding:4px;background:#0a2030;color:#8a4a1a;border:1px solid #4a2a0a;border-radius:4px;cursor:pointer;font-family:inherit;font-size:clamp(9px,1.1vw,13px);letter-spacing:1px">RESET</button>
+  </div>
 </div>
 <script>
 'use strict';
@@ -104,44 +111,97 @@ const hFps=document.getElementById('h-fps'),   hSpd=document.getElementById('h-s
 
 const sFog=document.getElementById('s-fog'), vFog=document.getElementById('v-fog');
 
-let velocity = logVal(+sVel.value,   VEL_MIN, VEL_MAX);
-let N        = logVal(+sStars.value, STR_MIN, STR_MAX);
-let fog      = +sFog.value / 100;  // 0–1
+// ── Defaults & persistence ─────────────────────────────────────
+const DEFAULTS = { vel:64, stars:64, bright:25, fog:42, att:5, lag:50, bhrate:15, bhsize:50, bhOn:true, nebOn:true };
+const STORE_KEY = 'starfield_settings';
 
-function setVelLabel(){ vVel.textContent=velocity.toLocaleString()+' u/s'; hSpd.textContent=velocity.toLocaleString(); }
-function setStarLabel(){ vStars.textContent=fmtN(N); hN.textContent=fmtN(N); }
-
-sVel.addEventListener('input',   ()=>{ velocity=logVal(+sVel.value,   VEL_MIN, VEL_MAX); setVelLabel(); });
-sStars.addEventListener('input', ()=>{ N=logVal(+sStars.value, STR_MIN, STR_MAX); setStarLabel(); updateGrid(); });
-sFog.addEventListener('input', ()=>{ fog=+sFog.value/100; vFog.textContent=sFog.value+'%'; });
+function loadSettings() {
+  try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch { return {}; }
+}
+function saveSettings() {
+  localStorage.setItem(STORE_KEY, JSON.stringify({
+    vel:+sVel.value, stars:+sStars.value, bright:+sBright.value, fog:+sFog.value,
+    att:+sAtt.value, lag:+sLag.value, bhrate:+sBHrate.value, bhsize:+sBHsize.value,
+    bhOn:bhEnabled, nebOn:nebEnabled
+  }));
+}
 
 const sAtt=document.getElementById('s-att'), vAtt=document.getElementById('v-att');
 const sLag=document.getElementById('s-lag'), vLag=document.getElementById('v-lag');
-let attScale = +sAtt.value / 100;  // 0–1
-let lagScale = +sLag.value / 100;  // 0–1
-function setAttLabel(){ vAtt.textContent = Math.round(attScale*100)+'%'; }
-function setLagLabel(){ vLag.textContent = Math.round(lagScale*100)+'%'; }
-sAtt.addEventListener('input', ()=>{ attScale=+sAtt.value/100; setAttLabel(); });
-sLag.addEventListener('input', ()=>{ lagScale=+sLag.value/100; setLagLabel(); });
-
 const sBright=document.getElementById('s-bright'), vBright=document.getElementById('v-bright');
-let brightness = +sBright.value / 100;
-function setBrightLabel(){ vBright.textContent = Math.round(brightness*100)+'%'; }
-sBright.addEventListener('input', ()=>{ brightness=+sBright.value/100; setBrightLabel(); });
-
 const sBHrate=document.getElementById('s-bhrate'), vBHrate=document.getElementById('v-bhrate');
 const sBHsize=document.getElementById('s-bhsize'), vBHsize=document.getElementById('v-bhsize');
-let bhRate = +sBHrate.value / 100;
-let bhSize = +sBHsize.value / 100;
+const btnBH = document.getElementById('btn-bh');
+const btnNeb = document.getElementById('btn-neb');
+
+// Apply saved or default values to sliders
+const saved = loadSettings();
+sVel.value    = saved.vel    ?? DEFAULTS.vel;
+sStars.value  = saved.stars  ?? DEFAULTS.stars;
+sBright.value = saved.bright ?? DEFAULTS.bright;
+sFog.value    = saved.fog    ?? DEFAULTS.fog;
+sAtt.value    = saved.att    ?? DEFAULTS.att;
+sLag.value    = saved.lag    ?? DEFAULTS.lag;
+sBHrate.value = saved.bhrate ?? DEFAULTS.bhrate;
+sBHsize.value = saved.bhsize ?? DEFAULTS.bhsize;
+
+let velocity   = logVal(+sVel.value, VEL_MIN, VEL_MAX);
+let N          = logVal(+sStars.value, STR_MIN, STR_MAX);
+let fog        = +sFog.value / 100;
+let attScale   = +sAtt.value / 100;
+let lagScale   = +sLag.value / 100;
+let brightness = +sBright.value / 100;
+let bhRate     = +sBHrate.value / 100;
+let bhSize     = +sBHsize.value / 100;
+let bhEnabled  = saved.bhOn  ?? DEFAULTS.bhOn;
+let nebEnabled = saved.nebOn ?? DEFAULTS.nebOn;
+
+function setVelLabel(){ vVel.textContent=velocity.toLocaleString()+' u/s'; hSpd.textContent=velocity.toLocaleString(); }
+function setStarLabel(){ vStars.textContent=fmtN(N); hN.textContent=fmtN(N); }
+function setAttLabel(){ vAtt.textContent = Math.round(attScale*100)+'%'; }
+function setLagLabel(){ vLag.textContent = Math.round(lagScale*100)+'%'; }
+function setBrightLabel(){ vBright.textContent = Math.round(brightness*100)+'%'; }
 function setBHrateLabel(){ vBHrate.textContent = bhRate<=0?'Off':Math.round(bhRate*100)+'%'; }
 function setBHsizeLabel(){ vBHsize.textContent = Math.round(bhSize*100)+'%'; }
-sBHrate.addEventListener('input', ()=>{ bhRate=+sBHrate.value/100; setBHrateLabel(); });
-sBHsize.addEventListener('input', ()=>{ bhSize=+sBHsize.value/100; setBHsizeLabel(); });
+function updateBtnStyle(btn, on) {
+  btn.textContent = btn === btnBH ? (on ? 'BH ON' : 'BH OFF') : (on ? 'NEB ON' : 'NEB OFF');
+  btn.style.color = on ? '#1ad' : '#555';
+  btn.style.borderColor = on ? '#1a4a6a' : '#333';
+}
 
+sVel.addEventListener('input',    ()=>{ velocity=logVal(+sVel.value, VEL_MIN, VEL_MAX); setVelLabel(); saveSettings(); });
+sStars.addEventListener('input',  ()=>{ N=logVal(+sStars.value, STR_MIN, STR_MAX); setStarLabel(); updateGrid(); saveSettings(); });
+sFog.addEventListener('input',    ()=>{ fog=+sFog.value/100; vFog.textContent=sFog.value+'%'; saveSettings(); });
+sAtt.addEventListener('input',    ()=>{ attScale=+sAtt.value/100; setAttLabel(); saveSettings(); });
+sLag.addEventListener('input',    ()=>{ lagScale=+sLag.value/100; setLagLabel(); saveSettings(); });
+sBright.addEventListener('input', ()=>{ brightness=+sBright.value/100; setBrightLabel(); saveSettings(); });
+sBHrate.addEventListener('input', ()=>{ bhRate=+sBHrate.value/100; setBHrateLabel(); saveSettings(); });
+sBHsize.addEventListener('input', ()=>{ bhSize=+sBHsize.value/100; setBHsizeLabel(); saveSettings(); });
+btnBH.addEventListener('click',   ()=>{ bhEnabled=!bhEnabled; updateBtnStyle(btnBH, bhEnabled); saveSettings(); });
+btnNeb.addEventListener('click',  ()=>{ nebEnabled=!nebEnabled; updateBtnStyle(btnNeb, nebEnabled); saveSettings(); });
+
+// Reset button
+document.getElementById('btn-reset').addEventListener('click', () => {
+  sVel.value=DEFAULTS.vel; sStars.value=DEFAULTS.stars; sBright.value=DEFAULTS.bright;
+  sFog.value=DEFAULTS.fog; sAtt.value=DEFAULTS.att; sLag.value=DEFAULTS.lag;
+  sBHrate.value=DEFAULTS.bhrate; sBHsize.value=DEFAULTS.bhsize;
+  velocity=logVal(DEFAULTS.vel, VEL_MIN, VEL_MAX); N=logVal(DEFAULTS.stars, STR_MIN, STR_MAX);
+  fog=DEFAULTS.fog/100; attScale=DEFAULTS.att/100; lagScale=DEFAULTS.lag/100;
+  brightness=DEFAULTS.bright/100; bhRate=DEFAULTS.bhrate/100; bhSize=DEFAULTS.bhsize/100;
+  bhEnabled=DEFAULTS.bhOn; nebEnabled=DEFAULTS.nebOn;
+  updateGrid();
+  setVelLabel(); setStarLabel(); setBrightLabel(); setAttLabel(); setLagLabel();
+  vFog.textContent=DEFAULTS.fog+'%'; setBHrateLabel(); setBHsizeLabel();
+  updateBtnStyle(btnBH, bhEnabled); updateBtnStyle(btnNeb, nebEnabled);
+  saveSettings();
+});
+
+// Init labels
 setVelLabel(); setStarLabel();
 vFog.textContent = sFog.value + '%';
 setAttLabel(); setLagLabel();
 setBrightLabel(); setBHrateLabel(); setBHsizeLabel();
+updateBtnStyle(btnBH, bhEnabled); updateBtnStyle(btnNeb, nebEnabled);
 
 // ── Scene constants ────────────────────────────────────────────
 const MAX_DIST = 4000.0;
@@ -1019,19 +1079,21 @@ function frame(ts){
   const proj = perspective(80, asp, 0.3, MAX_DIST + 200);
   const vp   = mul(proj, viewMat);
 
-  // ── Render scene to FBO ──────────────────────────────────────
-  gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFbo);
+  const needPost = bhEnabled || nebEnabled;
+
+  // ── Render scene (to FBO if post-processing needed, else direct) ─
+  gl.bindFramebuffer(gl.FRAMEBUFFER, needPost ? sceneFbo : null);
   gl.viewport(0, 0, canvas.width, canvas.height);
   gl.clearColor(0, 0, 0, 1);
   gl.clear(gl.COLOR_BUFFER_BIT);
 
-  // Skybox
-  gl.useProgram(skyProg);
-  gl.uniform1f(skyU.fovTan, Math.tan(80 * Math.PI / 360));
-  gl.uniform1f(skyU.aspect, asp);
-  gl.uniformMatrix4fv(skyU.invView, false, transpose4(viewMat));
-  gl.bindVertexArray(quadVAO);
-  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  // Skybox (disabled for testing)
+  // gl.useProgram(skyProg);
+  // gl.uniform1f(skyU.fovTan, Math.tan(80 * Math.PI / 360));
+  // gl.uniform1f(skyU.aspect, asp);
+  // gl.uniformMatrix4fv(skyU.invView, false, transpose4(viewMat));
+  // gl.bindVertexArray(quadVAO);
+  // gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
   // Stars
   gl.enable(gl.BLEND);
@@ -1050,40 +1112,42 @@ function frame(ts){
   gl.drawArrays(gl.POINTS, 0, drawCount);
   gl.disable(gl.BLEND);
 
-  // ── Find black holes & nebulae via spatial hash ───────────────
-  const bhs  = findBlackHoles(vp);
-  const nebs = updateNebulae(dt);
+  // ── Post-processing pass (only when BH or nebulae are on) ────
+  if (needPost) {
+    const bhs  = bhEnabled  ? findBlackHoles(vp) : [];
+    const nebs = nebEnabled ? updateNebulae(dt)   : [];
 
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  gl.viewport(0, 0, canvas.width, canvas.height);
-  gl.useProgram(lensProg);
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, sceneTex);
-  gl.uniform1i(lensU.scene, 0);
-  gl.uniform1f(lensU.aspect, asp);
-  gl.uniform1f(lensU.fovTan, Math.tan(80 * Math.PI / 360));
-  gl.uniformMatrix4fv(lensU.invView, false, transpose4(viewMat));
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.useProgram(lensProg);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, sceneTex);
+    gl.uniform1i(lensU.scene, 0);
+    gl.uniform1f(lensU.aspect, asp);
+    gl.uniform1f(lensU.fovTan, Math.tan(80 * Math.PI / 360));
+    gl.uniformMatrix4fv(lensU.invView, false, transpose4(viewMat));
 
-  // Black holes
-  gl.uniform1f(lensU.fog, fog);
-  gl.uniform1i(lensU.numBH, bhs.length);
-  for (let i = 0; i < bhs.length; i++) {
-    gl.uniform2f(lensU.bhPos[i], bhs[i].sx, bhs[i].sy);
-    gl.uniform1f(lensU.bhRe[i],  bhs[i].re);
+    // Black holes
+    gl.uniform1f(lensU.fog, fog);
+    gl.uniform1i(lensU.numBH, bhs.length);
+    for (let i = 0; i < bhs.length; i++) {
+      gl.uniform2f(lensU.bhPos[i], bhs[i].sx, bhs[i].sy);
+      gl.uniform1f(lensU.bhRe[i],  bhs[i].re);
+    }
+
+    // Nebulae
+    gl.uniform1i(lensU.numNeb, nebs.length);
+    for (let i = 0; i < nebs.length; i++) {
+      gl.uniform3f(lensU.nebPos[i],    nebs[i].rx, nebs[i].ry, nebs[i].rz);
+      gl.uniform1f(lensU.nebRadius[i], nebs[i].radius);
+      gl.uniform3f(lensU.nebColor[i],  nebs[i].color[0], nebs[i].color[1], nebs[i].color[2]);
+      gl.uniform1f(lensU.nebSeed[i],   nebs[i].seed);
+      gl.uniform1f(lensU.nebAlpha[i],  nebs[i].alpha);
+    }
+
+    gl.bindVertexArray(quadVAO);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
-
-  // Nebulae
-  gl.uniform1i(lensU.numNeb, nebs.length);
-  for (let i = 0; i < nebs.length; i++) {
-    gl.uniform3f(lensU.nebPos[i],    nebs[i].rx, nebs[i].ry, nebs[i].rz);
-    gl.uniform1f(lensU.nebRadius[i], nebs[i].radius);
-    gl.uniform3f(lensU.nebColor[i],  nebs[i].color[0], nebs[i].color[1], nebs[i].color[2]);
-    gl.uniform1f(lensU.nebSeed[i],   nebs[i].seed);
-    gl.uniform1f(lensU.nebAlpha[i],  nebs[i].alpha);
-  }
-
-  gl.bindVertexArray(quadVAO);
-  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 }
 
 requestAnimationFrame(frame);
