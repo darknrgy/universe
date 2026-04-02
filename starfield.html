@@ -64,14 +64,14 @@ input[type=range]::-webkit-slider-thumb {
 <div id="hud">FPS <b id="h-fps">—</b><br>SPEED <b id="h-spd">—</b><br>STARS <b id="h-n">—</b></div>
 <div id="panel-tab">&#9654;</div>
 <div id="panel">
-  <div class="ctrl"><label>Velocity</label><input type="range" id="s-vel" min="0" max="100" value="64"><span class="val" id="v-vel">—</span></div>
+  <div class="ctrl"><label>Velocity</label><input type="range" id="s-vel" min="0" max="100" value="45"><span class="val" id="v-vel">—</span></div>
   <div class="ctrl"><label>Stars</label><input type="range" id="s-stars" min="0" max="100" value="64"><span class="val" id="v-stars">—</span></div>
   <div class="ctrl"><label>Brightness</label><input type="range" id="s-bright" min="0" max="100" value="25"><span class="val" id="v-bright">—</span></div>
   <div class="ctrl"><label>Fog</label><input type="range" id="s-fog" min="0" max="100" value="42"><span class="val" id="v-fog">—</span></div>
   <div class="ctrl"><label>Attitude</label><input type="range" id="s-att" min="0" max="100" value="5"><span class="val" id="v-att">—</span></div>
   <div class="ctrl"><label>Lag</label><input type="range" id="s-lag" min="0" max="100" value="50"><span class="val" id="v-lag">—</span></div>
-  <div class="ctrl"><label>BH Rate</label><input type="range" id="s-bhrate" min="0" max="100" value="15"><span class="val" id="v-bhrate">—</span></div>
-  <div class="ctrl"><label>BH Size</label><input type="range" id="s-bhsize" min="0" max="100" value="50"><span class="val" id="v-bhsize">—</span></div>
+  <div class="ctrl"><label>BH Rate</label><input type="range" id="s-bhrate" min="0" max="100" value="21"><span class="val" id="v-bhrate">—</span></div>
+  <div class="ctrl"><label>BH Size</label><input type="range" id="s-bhsize" min="0" max="100" value="80"><span class="val" id="v-bhsize">—</span></div>
   <div class="ctrl" style="margin-top:4px">
     <button id="btn-bh" style="flex:1;padding:4px;background:#0a2030;color:#1ad;border:1px solid #1a4a6a;border-radius:4px;cursor:pointer;font-family:inherit;font-size:clamp(9px,1.1vw,13px);letter-spacing:1px">BH ON</button>
     <button id="btn-neb" style="flex:1;padding:4px;background:#0a2030;color:#1ad;border:1px solid #1a4a6a;border-radius:4px;cursor:pointer;font-family:inherit;font-size:clamp(9px,1.1vw,13px);letter-spacing:1px">NEB ON</button>
@@ -112,7 +112,7 @@ const hFps=document.getElementById('h-fps'),   hSpd=document.getElementById('h-s
 const sFog=document.getElementById('s-fog'), vFog=document.getElementById('v-fog');
 
 // ── Defaults & persistence ─────────────────────────────────────
-const DEFAULTS = { vel:64, stars:64, bright:25, fog:42, att:5, lag:50, bhrate:15, bhsize:50, bhOn:true, nebOn:true };
+const DEFAULTS = { vel:45, stars:64, bright:25, fog:42, att:5, lag:50, bhrate:21, bhsize:80, bhOn:true, nebOn:true };
 const STORE_KEY = 'starfield_settings';
 
 function loadSettings() {
