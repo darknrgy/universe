@@ -923,7 +923,11 @@ function rX(a){ const c=Math.cos(a),s=Math.sin(a); return new Float32Array([1,0,
 function rZ(a){ const c=Math.cos(a),s=Math.sin(a); return new Float32Array([c,s,0,0,-s,c,0,0,0,0,1,0,0,0,0,1]); }
 
 // ── Camera 3D position (JS doubles — infinite precision) ───────
-const camPos = { x: 0, y: 0, z: 0 };
+const camPos = {
+  x: (Math.random() - 0.5) * 1e8,
+  y: (Math.random() - 0.5) * 1e8,
+  z: (Math.random() - 0.5) * 1e8
+};
 
 function forwardDir(pitch, yaw) {
   // Must match the -Z axis of rX(pitch) * rY(yaw) view matrix
@@ -1034,7 +1038,8 @@ function updateFlight(dt) {
   return 1.0 / (1.0 + turnMag * FLY.speedDrag);
 }
 
-// ── Fly mode toggle ────────────────────────────────────────────
+// ── Pre-warm flight so attitude starts settled ────────────────
+for (let i = 0; i < 300; i++) updateFlight(1/60);
 
 // ── Render loop ────────────────────────────────────────────────
 function frame(ts){
