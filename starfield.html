@@ -1087,13 +1087,13 @@ function frame(ts){
   gl.clearColor(0, 0, 0, 1);
   gl.clear(gl.COLOR_BUFFER_BIT);
 
-  // Skybox (disabled for testing)
-  // gl.useProgram(skyProg);
-  // gl.uniform1f(skyU.fovTan, Math.tan(80 * Math.PI / 360));
-  // gl.uniform1f(skyU.aspect, asp);
-  // gl.uniformMatrix4fv(skyU.invView, false, transpose4(viewMat));
-  // gl.bindVertexArray(quadVAO);
-  // gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  // Skybox
+  gl.useProgram(skyProg);
+  gl.uniform1f(skyU.fovTan, Math.tan(80 * Math.PI / 360));
+  gl.uniform1f(skyU.aspect, asp);
+  gl.uniformMatrix4fv(skyU.invView, false, transpose4(viewMat));
+  gl.bindVertexArray(quadVAO);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
   // Stars
   gl.enable(gl.BLEND);
