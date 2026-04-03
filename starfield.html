@@ -589,7 +589,6 @@ float nfbm(vec3 p){
 
 void main(){
   vec2 uv = vUV;
-  float totalMag = 1.0;
 
   // ── Black hole lensing ───────────────────────────────────────
   for(int i=0; i<16; i++){
@@ -605,14 +604,10 @@ void main(){
       vec2 nd = dir * r_src;
       nd.x /= uAspect;
       uv = uBHpos[i] + nd;
-      float u = r / re;
-      float mag = (u*u + 2.0) / (u * sqrt(u*u + 4.0) + 0.001);
-      totalMag *= min(mag, 6.0);
     }
   }
 
   vec4 col = texture(uScene, clamp(uv, 0.0, 1.0));
-  col.rgb *= totalMag;
 
   // BH shadow
   float shadow = 1.0;
