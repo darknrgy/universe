@@ -309,7 +309,7 @@ void main(){
   // Spectral colour from world-cell hash
   float w = rnd(seed);
   float h  = fhash(w * 0.7391 + 0.1);
-  float br = 0.5 + fhash(w * 0.3947 + 0.9) * 0.5;
+  float br = pow(fhash(w * 0.3947 + 0.9), 3.0) * 0.85 + 0.15;
   vec3 col;
   if      (h < 0.05) col = vec3(1.00, 0.55, 0.45);
   else if (h < 0.16) col = vec3(1.00, 0.78, 0.55);
@@ -317,6 +317,7 @@ void main(){
   else if (h < 0.72) col = vec3(0.98, 0.98, 1.00);
   else               col = vec3(0.82, 0.88, 1.00);
   vColor = col * br;
+  gl_PointSize *= (0.5 + br * 0.5);
 }`;
 
 const FRAG_SRC = `#version 300 es
