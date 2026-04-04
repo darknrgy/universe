@@ -50,6 +50,20 @@ input[type=range]::-webkit-slider-thumb {
   color:#8f5; font-size:clamp(9px,1.1vw,14px); font-weight:bold;
   min-width:clamp(50px,5vw,80px); text-align:right;
 }
+.info-btn {
+  width:clamp(14px,1.4vw,18px); height:clamp(14px,1.4vw,18px);
+  border-radius:50%; border:1px solid #1a4a6a; background:transparent;
+  color:#2a6a8a; font-size:clamp(8px,0.9vw,11px); font-family:serif; font-style:italic;
+  cursor:pointer; flex-shrink:0; padding:0; line-height:1;
+  display:flex; align-items:center; justify-content:center;
+}
+.info-btn:hover { background:#0a2030; color:#1ad; }
+.info-tip {
+  display:none; position:fixed; background:rgba(0,20,40,0.95); color:#6cf;
+  font-size:clamp(10px,1.1vw,13px); padding:8px 12px; border-radius:6px;
+  border:1px solid #1a4a6a; max-width:240px; z-index:100; pointer-events:none;
+  line-height:1.4;
+}
 
 #hud {
   position:fixed; top:clamp(8px,1.5vh,16px); right:clamp(10px,1.5vw,18px);
@@ -64,14 +78,14 @@ input[type=range]::-webkit-slider-thumb {
 <div id="hud">FPS <b id="h-fps">—</b><br>SPEED <b id="h-spd">—</b><br>STARS <b id="h-n">—</b></div>
 <div id="panel-tab">&#9654;</div>
 <div id="panel">
-  <div class="ctrl"><label>Velocity</label><input type="range" id="s-vel" min="0" max="100" value="45"><span class="val" id="v-vel">—</span></div>
-  <div class="ctrl"><label>Stars</label><input type="range" id="s-stars" min="0" max="100" value="64"><span class="val" id="v-stars">—</span></div>
-  <div class="ctrl"><label>Brightness</label><input type="range" id="s-bright" min="0" max="100" value="25"><span class="val" id="v-bright">—</span></div>
-  <div class="ctrl"><label>Fog</label><input type="range" id="s-fog" min="0" max="100" value="42"><span class="val" id="v-fog">—</span></div>
-  <div class="ctrl"><label>Attitude</label><input type="range" id="s-att" min="0" max="100" value="5"><span class="val" id="v-att">—</span></div>
-  <div class="ctrl"><label>Lag</label><input type="range" id="s-lag" min="0" max="100" value="50"><span class="val" id="v-lag">—</span></div>
-  <div class="ctrl"><label>BH Rate</label><input type="range" id="s-bhrate" min="0" max="100" value="21"><span class="val" id="v-bhrate">—</span></div>
-  <div class="ctrl"><label>BH Size</label><input type="range" id="s-bhsize" min="0" max="100" value="80"><span class="val" id="v-bhsize">—</span></div>
+  <div class="ctrl"><label>Velocity</label><input type="range" id="s-vel" min="0" max="100" value="45"><span class="val" id="v-vel">—</span><button class="info-btn" data-tip="Flight speed through the starfield. Higher values cover more distance per second.">i</button></div>
+  <div class="ctrl"><label>Stars</label><input type="range" id="s-stars" min="0" max="100" value="64"><span class="val" id="v-stars">—</span><button class="info-btn" data-tip="Total number of stars rendered. Higher values look denser but cost more GPU.">i</button></div>
+  <div class="ctrl"><label>Brightness</label><input type="range" id="s-bright" min="0" max="100" value="25"><span class="val" id="v-bright">—</span><button class="info-btn" data-tip="Overall star brightness and apparent size. Scales both the glow intensity and point size.">i</button></div>
+  <div class="ctrl"><label>Fog</label><input type="range" id="s-fog" min="0" max="100" value="42"><span class="val" id="v-fog">—</span><button class="info-btn" data-tip="Distance fog that fades stars at range. Higher values shorten visibility, giving a denser feel.">i</button></div>
+  <div class="ctrl"><label>Attitude</label><input type="range" id="s-att" min="0" max="100" value="5"><span class="val" id="v-att">—</span><button class="info-btn" data-tip="How aggressively the camera pitches, yaws, and rolls during flight. Low = gentle drift, high = wild tumbling.">i</button></div>
+  <div class="ctrl"><label>Lag</label><input type="range" id="s-lag" min="0" max="100" value="50"><span class="val" id="v-lag">—</span><button class="info-btn" data-tip="How loosely the flight trajectory follows the camera heading. Low = tight coupling, high = floaty and indirect.">i</button></div>
+  <div class="ctrl"><label>BH Rate</label><input type="range" id="s-bhrate" min="0" max="100" value="21"><span class="val" id="v-bhrate">—</span><button class="info-btn" data-tip="How frequently black holes appear in space. Higher values mean more black holes per region.">i</button></div>
+  <div class="ctrl"><label>BH Size</label><input type="range" id="s-bhsize" min="0" max="100" value="80"><span class="val" id="v-bhsize">—</span><button class="info-btn" data-tip="Einstein radius of black holes, controlling how large their gravitational lensing effect appears.">i</button></div>
   <div class="ctrl" style="margin-top:4px">
     <button id="btn-bh" style="flex:1;padding:4px;background:#0a2030;color:#1ad;border:1px solid #1a4a6a;border-radius:4px;cursor:pointer;font-family:inherit;font-size:clamp(9px,1.1vw,13px);letter-spacing:1px">BH ON</button>
     <button id="btn-neb" style="flex:1;padding:4px;background:#0a2030;color:#1ad;border:1px solid #1a4a6a;border-radius:4px;cursor:pointer;font-family:inherit;font-size:clamp(9px,1.1vw,13px);letter-spacing:1px">NEB ON</button>
@@ -80,8 +94,36 @@ input[type=range]::-webkit-slider-thumb {
     <button id="btn-reset" style="flex:1;padding:4px;background:#0a2030;color:#8a4a1a;border:1px solid #4a2a0a;border-radius:4px;cursor:pointer;font-family:inherit;font-size:clamp(9px,1.1vw,13px);letter-spacing:1px">DEFAULTS</button>
   </div>
 </div>
+<div class="info-tip" id="info-tip"></div>
 <script>
 'use strict';
+
+// ── Info button tooltips ──────────────────────────────────────
+{
+  const tip = document.getElementById('info-tip');
+  let hideTimer = null;
+  function showTip(btn) {
+    tip.textContent = btn.getAttribute('data-tip');
+    tip.style.display = 'block';
+    const r = btn.getBoundingClientRect();
+    tip.style.left = (r.right + 8) + 'px';
+    tip.style.top = r.top + 'px';
+    // keep tip on screen
+    const tr = tip.getBoundingClientRect();
+    if (tr.right > window.innerWidth - 8) tip.style.left = (r.left - tr.width - 8) + 'px';
+    if (tr.bottom > window.innerHeight - 8) tip.style.top = (window.innerHeight - tr.height - 8) + 'px';
+  }
+  function hideTip() { tip.style.display = 'none'; }
+  document.querySelectorAll('.info-btn').forEach(btn => {
+    btn.addEventListener('mouseenter', () => { clearTimeout(hideTimer); showTip(btn); });
+    btn.addEventListener('mouseleave', () => { hideTimer = setTimeout(hideTip, 200); });
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (tip.style.display === 'block') hideTip(); else showTip(btn);
+    });
+  });
+  document.addEventListener('click', hideTip);
+}
 
 // ── Canvas / GL ────────────────────────────────────────────────
 const canvas = document.getElementById('canvas');
