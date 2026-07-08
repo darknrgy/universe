@@ -1370,7 +1370,7 @@ let slewOmega = 0;                    // angular rate of velocity chasing the no
 let gear = 1;                         // +1 forward, -1 reverse (set by I/K, kept while coasting)
 
 const MANUAL = {
-  rotAccel: 2.2,    // angular accel while a rotation key is held (rad/s²) — gentle ramp
+  rotAccel: 0.88,   // angular accel while a rotation key is held (rad/s²) — gentle ramp
   rotDamp:  1.8,    // angular-velocity exponential decay (per second) — eases spin in/out
   maxRate:  2.0,    // clamp on angular velocity per axis (rad/s)
   velDrag:  0.12,   // velocity exponential decay per second — natural floaty coast
