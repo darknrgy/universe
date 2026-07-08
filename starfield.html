@@ -476,7 +476,6 @@ void main(){
 const SKY_FS = `#version 300 es
 precision highp float;
 in vec3 vRayDir;
-uniform vec3 uSkyOff;   // parallax offset — shifts the sampled direction with camera motion
 out vec4 fragColor;
 
 float h31(vec3 p){
@@ -516,9 +515,7 @@ vec3 rotNoise(vec3 p){
 }
 
 void main(){
-  // Perturb the sampled direction by the accumulated parallax offset so the
-  // whole sky drifts with camera translation (subtle far-field parallax).
-  vec3 d = normalize(normalize(vRayDir) + uSkyOff);
+  vec3 d = normalize(vRayDir);
 
   // ── Distant galaxies (subtle smudges at various scales) ────────
   vec3 galCol = vec3(0.0);
@@ -607,7 +604,6 @@ const skyU = {
   fovTan:  gl.getUniformLocation(skyProg, 'uFovTan'),
   aspect:  gl.getUniformLocation(skyProg, 'uAspect'),
   invView: gl.getUniformLocation(skyProg, 'uInvView'),
-  skyOff:  gl.getUniformLocation(skyProg, 'uSkyOff'),
 };
 
 const quadBuf = gl.createBuffer();
@@ -1241,15 +1237,6 @@ const camPos = {
   z: (Math.random() - 0.5) * 1e8
 };
 
-// Skybox parallax: a small direction offset that accumulates with camera
-// translation and slowly leaks back toward zero. Responds to motion (so the
-// far sky drifts with the stars) but stays bounded for long sessions, keeping
-// normalize(d + uSkyOff) well-conditioned.
-const skyOff = { x:0, y:0, z:0 };
-const SKY_PARALLAX = 1.0e-3;   // offset gained per unit of camera displacement
-const SKY_LEAK     = 0.25;     // per-second decay back toward centered
-const SKY_MAX      = 0.30;     // max offset magnitude (caps apparent sky shift)
-
 function forwardDir(pitch, yaw) {
   // Must match the -Z axis of rX(pitch) * rY(yaw) view matrix
   return {
@@ -1551,19 +1538,10 @@ function frame(ts){
 
   // Move camera through 3D space along its forward direction
   if (!paused) {
-    const mx = fwd.x * spd * dt, my = fwd.y * spd * dt, mz = fwd.z * spd * dt;
-    camPos.x += mx; camPos.y += my; camPos.z += mz;
-    // Feed the actual displacement into the skybox parallax offset.
-    skyOff.x += mx * SKY_PARALLAX;
-    skyOff.y += my * SKY_PARALLAX;
-    skyOff.z += mz * SKY_PARALLAX;
+    camPos.x += fwd.x * spd * dt;
+    camPos.y += fwd.y * spd * dt;
+    camPos.z += fwd.z * spd * dt;
   }
-  // Slow leak keeps the offset bounded (imperceptible over a strafe, prevents drift).
-  const skyLeak = Math.exp(-SKY_LEAK * dt);
-  skyOff.x *= skyLeak; skyOff.y *= skyLeak; skyOff.z *= skyLeak;
-  // Hard cap so fast flight can't push normalize(d + skyOff) toward collapse.
-  const soMag = Math.hypot(skyOff.x, skyOff.y, skyOff.z);
-  if (soMag > SKY_MAX) { const s = SKY_MAX / soMag; skyOff.x*=s; skyOff.y*=s; skyOff.z*=s; }
 
   // Split position into integer cell + fractional offset (precision-safe)
   const cx = Math.floor(camPos.x / cellSize);
@@ -1590,7 +1568,6 @@ function frame(ts){
   gl.uniform1f(skyU.fovTan, Math.tan(80 * Math.PI / 360));
   gl.uniform1f(skyU.aspect, asp);
   gl.uniformMatrix4fv(skyU.invView, false, transpose4(viewMat));
-  gl.uniform3f(skyU.skyOff, skyOff.x, skyOff.y, skyOff.z);
   gl.bindVertexArray(quadVAO);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
