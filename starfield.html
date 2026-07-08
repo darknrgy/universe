@@ -87,7 +87,7 @@ input[type=range]::-webkit-slider-thumb {
   <div class="ctrl"><label>BH Rate</label><input type="range" id="s-bhrate" min="0" max="100" value="21"><span class="val" id="v-bhrate">—</span><button class="info-btn" data-tip="How frequently black holes appear in space. Higher values mean more black holes per region.">i</button></div>
   <div class="ctrl" style="margin-top:4px">
     <button id="btn-manual" style="flex:1;padding:4px;background:#0a2030;color:#555;border:1px solid #333;border-radius:4px;cursor:pointer;font-family:inherit;font-size:clamp(9px,1.1vw,13px);letter-spacing:1px">AUTO</button>
-    <button class="info-btn" data-tip="Switch between automatic flight and manual piloting. Manual: J/L yaw, I/K pitch, U/O roll, W forward, S reverse, A/D strafe left/right, Q/E down/up, Space to brake. Speed continuously bleeds off at a low rate.">i</button>
+    <button class="info-btn" data-tip="Switch between automatic flight and manual piloting. Manual: J/L yaw, I/K pitch, U/O roll, W forward, S reverse, A/D strafe left/right, Q/E down/up, Space to brake. Velocity is conserved — hold Space to slow down.">i</button>
   </div>
   <div id="keymap" style="display:none;color:#2a6a8a;font-size:clamp(8px,0.95vw,12px);line-height:1.7;letter-spacing:1px;padding:2px 0">
     <span style="color:#1ad">J</span>/<span style="color:#1ad">L</span> yaw &nbsp; <span style="color:#1ad">I</span>/<span style="color:#1ad">K</span> pitch &nbsp; <span style="color:#1ad">U</span>/<span style="color:#1ad">O</span> roll<br>
@@ -1362,9 +1362,11 @@ const MANUAL = {
   rotAccel: 0.88,   // angular accel while a rotation key is held (rad/s²) — gentle ramp
   rotDamp:  1.8,    // angular-velocity exponential decay (per second) — eases spin in/out
   maxRate:  2.0,    // clamp on angular velocity per axis (rad/s)
-  velDrag:  0.12,   // velocity exponential decay per second — natural floaty coast
+  velDrag:  0.0,    // no passive deceleration — velocity is conserved while coasting
   transBrake: 0.6,  // subtle extra decay while thrust fights motion (forward↔reverse flip)
-  brake:    2.0,    // strong extra decay while Space is held — universal brake
+  brakeAccel: 1.0,  // Space brake deceleration, as a multiple of thrust accel (1 = symmetric)
+  thrustBase: 0.3,  // input strength at a standstill (floor so you can start moving)
+  thrustRefV: 150,  // speed (u/s) at which inputs reach ~65% strength; full authority above
 };
 
 // Nose forward = body -Z expressed in world (already unit; attMat is orthonormal).
@@ -1431,7 +1433,11 @@ function updateManual(dt) {
   const Uax = { x:attMat[4], y:attMat[5], z:attMat[6] };   // body +Y (up)
   const accel = velocity;   // slider value, reinterpreted as u/s²
   const push = (v, s) => { vel.x += v.x*s; vel.y += v.y*s; vel.z += v.z*s; };
-  const a = accel * dt;
+  // Velocity-proportional gain: inputs attenuate at low speed for fine control,
+  // reach full authority at speed. Scales with the accel slider at every speed.
+  const sp0  = Math.hypot(vel.x, vel.y, vel.z);
+  const gain = MANUAL.thrustBase + (1 - MANUAL.thrustBase) * (sp0 / (sp0 + MANUAL.thrustRefV));
+  const a = accel * gain * dt;
 
   // Forward/reverse gear — set by W/S, retained while coasting.
   if (keys['KeyW']) gear =  1;
@@ -1456,10 +1462,20 @@ function updateManual(dt) {
   // ── Drag + transition brake: exponential decay → natural, floaty coast ──
   // Drag ∝ speed, so thrust eases toward a terminal and coasting bleeds off.
   // A subtle extra decay during opposition crisps up the reversal through zero.
-  const dragRate = MANUAL.velDrag + (opposing ? MANUAL.transBrake : 0) + (keys['Space'] ? MANUAL.brake : 0);
+  const dragRate = MANUAL.velDrag + (opposing ? MANUAL.transBrake : 0);
   const drag = Math.exp(-dragRate * dt);
   vel.x *= drag; vel.y *= drag; vel.z *= drag;
   let sp = Math.hypot(vel.x, vel.y, vel.z);
+
+  // Space brake: same velocity-proportional gain as thrust, so all translation
+  // inputs behave identically — firm at speed, refined near a stop.
+  if (keys['Space'] && sp > 0) {
+    const decel = accel * gain * MANUAL.brakeAccel;
+    const ns = Math.max(0, sp - decel * dt);
+    const k = ns / sp;
+    vel.x *= k; vel.y *= k; vel.z *= k;
+    sp = ns;
+  }
 
   // ── Lag: velocity vector chases the (gear) target direction ──────
   // Suppressed during opposition so the reversal passes through zero (no 180° swing).
