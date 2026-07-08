@@ -87,12 +87,12 @@ input[type=range]::-webkit-slider-thumb {
   <div class="ctrl"><label>BH Rate</label><input type="range" id="s-bhrate" min="0" max="100" value="21"><span class="val" id="v-bhrate">—</span><button class="info-btn" data-tip="How frequently black holes appear in space. Higher values mean more black holes per region.">i</button></div>
   <div class="ctrl" style="margin-top:4px">
     <button id="btn-manual" style="flex:1;padding:4px;background:#0a2030;color:#555;border:1px solid #333;border-radius:4px;cursor:pointer;font-family:inherit;font-size:clamp(9px,1.1vw,13px);letter-spacing:1px">AUTO</button>
-    <button class="info-btn" data-tip="Switch between automatic flight and manual piloting. Manual: A/D yaw, W/S pitch, Q/E roll, I forward, K reverse, J/L strafe left/right, U/O down/up. Speed continuously bleeds off at a low rate.">i</button>
+    <button class="info-btn" data-tip="Switch between automatic flight and manual piloting. Manual: J/L yaw, I/K pitch, U/O roll, W forward, S reverse, A/D strafe left/right, Q/E down/up, Space to brake. Speed continuously bleeds off at a low rate.">i</button>
   </div>
   <div id="keymap" style="display:none;color:#2a6a8a;font-size:clamp(8px,0.95vw,12px);line-height:1.7;letter-spacing:1px;padding:2px 0">
-    <span style="color:#1ad">A</span>/<span style="color:#1ad">D</span> yaw &nbsp; <span style="color:#1ad">W</span>/<span style="color:#1ad">S</span> pitch &nbsp; <span style="color:#1ad">Q</span>/<span style="color:#1ad">E</span> roll<br>
-    <span style="color:#1ad">I</span> fwd &nbsp; <span style="color:#1ad">K</span> rev &nbsp; <span style="color:#1ad">J</span>/<span style="color:#1ad">L</span> strafe &nbsp; <span style="color:#1ad">U</span>/<span style="color:#1ad">O</span> down/up<br>
-    <span style="color:#1ad">SPACE</span> pause
+    <span style="color:#1ad">J</span>/<span style="color:#1ad">L</span> yaw &nbsp; <span style="color:#1ad">I</span>/<span style="color:#1ad">K</span> pitch &nbsp; <span style="color:#1ad">U</span>/<span style="color:#1ad">O</span> roll<br>
+    <span style="color:#1ad">W</span> fwd &nbsp; <span style="color:#1ad">S</span> rev &nbsp; <span style="color:#1ad">A</span>/<span style="color:#1ad">D</span> strafe &nbsp; <span style="color:#1ad">Q</span>/<span style="color:#1ad">E</span> down/up<br>
+    <span style="color:#1ad">SPACE</span> brake &nbsp; <span style="color:#1ad">P</span> pause
   </div>
   <div class="ctrl" style="margin-top:4px">
     <button id="btn-bh" style="flex:1;padding:4px;background:#0a2030;color:#1ad;border:1px solid #1a4a6a;border-radius:4px;cursor:pointer;font-family:inherit;font-size:clamp(9px,1.1vw,13px);letter-spacing:1px">BH ON</button>
@@ -1139,10 +1139,12 @@ let paused=false;
 const keys = Object.create(null);
 const FLY_KEYS = new Set(['KeyA','KeyD','KeyW','KeyS','KeyQ','KeyE','KeyI','KeyK','KeyJ','KeyL','KeyO','KeyU']);
 window.addEventListener('keydown', e=>{
-  if (e.code==='Space'){ e.preventDefault(); paused=!paused; return; }
+  if (e.code==='KeyP'){ e.preventDefault(); paused=!paused; return; }
+  if (e.code==='Space'){ e.preventDefault(); keys['Space']=true; return; }  // held universal brake
   if (manualMode && FLY_KEYS.has(e.code)){ e.preventDefault(); keys[e.code]=true; }
 });
 window.addEventListener('keyup', e=>{
+  if (e.code==='Space') keys['Space']=false;
   if (FLY_KEYS.has(e.code)) keys[e.code]=false;
 });
 
@@ -1375,6 +1377,7 @@ const MANUAL = {
   maxRate:  2.0,    // clamp on angular velocity per axis (rad/s)
   velDrag:  0.12,   // velocity exponential decay per second — natural floaty coast
   transBrake: 0.6,  // subtle extra decay while thrust fights motion (forward↔reverse flip)
+  brake:    2.0,    // strong extra decay while Space is held — universal brake
 };
 
 // Nose forward = body -Z expressed in world (already unit; attMat is orthonormal).
@@ -1411,12 +1414,12 @@ function updateManual(dt) {
   // ── Rotation: keys apply angular acceleration in the ship's body frame ──
   // Pitch = X axis, Yaw = Y axis, Roll = Z axis.
   let ax=0, ay=0, az=0;
-  if (keys['KeyW']) ax -= MANUAL.rotAccel;   // pitch down
-  if (keys['KeyS']) ax += MANUAL.rotAccel;   // pitch up
-  if (keys['KeyD']) ay -= MANUAL.rotAccel;   // yaw right
-  if (keys['KeyA']) ay += MANUAL.rotAccel;   // yaw left
-  if (keys['KeyE']) az -= MANUAL.rotAccel;   // roll right
-  if (keys['KeyQ']) az += MANUAL.rotAccel;   // roll left
+  if (keys['KeyI']) ax -= MANUAL.rotAccel;   // pitch down
+  if (keys['KeyK']) ax += MANUAL.rotAccel;   // pitch up
+  if (keys['KeyL']) ay -= MANUAL.rotAccel;   // yaw right
+  if (keys['KeyJ']) ay += MANUAL.rotAccel;   // yaw left
+  if (keys['KeyO']) az -= MANUAL.rotAccel;   // roll right
+  if (keys['KeyU']) az += MANUAL.rotAccel;   // roll left
 
   attOmega.x += ax * dt;
   attOmega.y += ay * dt;
@@ -1443,16 +1446,16 @@ function updateManual(dt) {
   const push = (v, s) => { vel.x += v.x*s; vel.y += v.y*s; vel.z += v.z*s; };
   const a = accel * dt;
 
-  // Forward/reverse gear — set by I/K, retained while coasting.
-  if (keys['KeyI']) gear =  1;
-  if (keys['KeyK']) gear = -1;
+  // Forward/reverse gear — set by W/S, retained while coasting.
+  if (keys['KeyW']) gear =  1;
+  if (keys['KeyS']) gear = -1;
 
-  if (keys['KeyI']) push(D,  a);   // forward thrust
-  if (keys['KeyK']) push(D, -a);   // reverse thrust
-  if (keys['KeyL']) push(R,  a);   // strafe right
-  if (keys['KeyJ']) push(R, -a);   // strafe left
-  if (keys['KeyO']) push(Uax,  a); // up
-  if (keys['KeyU']) push(Uax, -a); // down
+  if (keys['KeyW']) push(D,  a);   // forward thrust
+  if (keys['KeyS']) push(D, -a);   // reverse thrust
+  if (keys['KeyD']) push(R,  a);   // strafe right
+  if (keys['KeyA']) push(R, -a);   // strafe left
+  if (keys['KeyE']) push(Uax,  a); // up
+  if (keys['KeyQ']) push(Uax, -a); // down
 
   // Chase target: the nose, or its reverse when in reverse gear.
   const tgt = gear > 0 ? D : { x:-D.x, y:-D.y, z:-D.z };
@@ -1461,12 +1464,12 @@ function updateManual(dt) {
   // flip). I (+D) opposes when vel·D<0; K (−D) opposes when vel·D>0. During this
   // phase we let the velocity burn straight through zero rather than swinging 180°.
   const velDotD = vel.x*D.x + vel.y*D.y + vel.z*D.z;
-  const opposing = (keys['KeyI'] && velDotD < 0) || (keys['KeyK'] && velDotD > 0);
+  const opposing = (keys['KeyW'] && velDotD < 0) || (keys['KeyS'] && velDotD > 0);
 
   // ── Drag + transition brake: exponential decay → natural, floaty coast ──
   // Drag ∝ speed, so thrust eases toward a terminal and coasting bleeds off.
   // A subtle extra decay during opposition crisps up the reversal through zero.
-  const dragRate = MANUAL.velDrag + (opposing ? MANUAL.transBrake : 0);
+  const dragRate = MANUAL.velDrag + (opposing ? MANUAL.transBrake : 0) + (keys['Space'] ? MANUAL.brake : 0);
   const drag = Math.exp(-dragRate * dt);
   vel.x *= drag; vel.y *= drag; vel.z *= drag;
   let sp = Math.hypot(vel.x, vel.y, vel.z);
