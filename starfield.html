@@ -78,14 +78,23 @@ input[type=range]::-webkit-slider-thumb {
 <div id="hud">FPS <b id="h-fps">—</b><br>SPEED <b id="h-spd">—</b><br>STARS <b id="h-n">—</b></div>
 <div id="panel-tab">&#9654;</div>
 <div id="panel">
-  <div class="ctrl"><label>Velocity</label><input type="range" id="s-vel" min="0" max="100" value="45"><span class="val" id="v-vel">—</span><button class="info-btn" data-tip="Flight speed through the starfield. Higher values cover more distance per second.">i</button></div>
+  <div class="ctrl"><label id="lbl-vel">Velocity</label><input type="range" id="s-vel" min="0" max="100" value="45"><span class="val" id="v-vel">—</span><button class="info-btn" id="tip-vel" data-tip="Flight speed through the starfield. Higher values cover more distance per second.">i</button></div>
   <div class="ctrl"><label>Stars</label><input type="range" id="s-stars" min="0" max="100" value="64"><span class="val" id="v-stars">—</span><button class="info-btn" data-tip="Total number of stars rendered. Higher values look denser but cost more GPU.">i</button></div>
   <div class="ctrl"><label>Brightness</label><input type="range" id="s-bright" min="0" max="100" value="25"><span class="val" id="v-bright">—</span><button class="info-btn" data-tip="Overall star brightness and apparent size. Scales both the glow intensity and point size.">i</button></div>
   <div class="ctrl"><label>Fog</label><input type="range" id="s-fog" min="0" max="100" value="42"><span class="val" id="v-fog">—</span><button class="info-btn" data-tip="Distance fog that fades stars at range. Higher values shorten visibility, giving a denser feel.">i</button></div>
-  <div class="ctrl"><label>Attitude</label><input type="range" id="s-att" min="0" max="100" value="5"><span class="val" id="v-att">—</span><button class="info-btn" data-tip="How aggressively the camera pitches, yaws, and rolls during flight. Low = gentle drift, high = wild tumbling.">i</button></div>
+  <div class="ctrl" id="row-att"><label>Attitude</label><input type="range" id="s-att" min="0" max="100" value="5"><span class="val" id="v-att">—</span><button class="info-btn" data-tip="How aggressively the camera pitches, yaws, and rolls during flight. Low = gentle drift, high = wild tumbling. Ignored in manual mode.">i</button></div>
   <div class="ctrl"><label>Lag</label><input type="range" id="s-lag" min="0" max="100" value="50"><span class="val" id="v-lag">—</span><button class="info-btn" data-tip="How loosely the flight trajectory follows the camera heading. Low = tight coupling, high = floaty and indirect.">i</button></div>
   <div class="ctrl"><label>BH Rate</label><input type="range" id="s-bhrate" min="0" max="100" value="21"><span class="val" id="v-bhrate">—</span><button class="info-btn" data-tip="How frequently black holes appear in space. Higher values mean more black holes per region.">i</button></div>
   <div class="ctrl"><label>BH Size</label><input type="range" id="s-bhsize" min="0" max="100" value="80"><span class="val" id="v-bhsize">—</span><button class="info-btn" data-tip="Einstein radius of black holes, controlling how large their gravitational lensing effect appears.">i</button></div>
+  <div class="ctrl" style="margin-top:4px">
+    <button id="btn-manual" style="flex:1;padding:4px;background:#0a2030;color:#555;border:1px solid #333;border-radius:4px;cursor:pointer;font-family:inherit;font-size:clamp(9px,1.1vw,13px);letter-spacing:1px">AUTO</button>
+    <button class="info-btn" data-tip="Switch between automatic flight and manual piloting. Manual: A/D yaw, W/S pitch, Q/E roll, I forward, K brake, J/L strafe left/right, U/O down/up. Speed continuously bleeds off at a low rate.">i</button>
+  </div>
+  <div id="keymap" style="display:none;color:#2a6a8a;font-size:clamp(8px,0.95vw,12px);line-height:1.7;letter-spacing:1px;padding:2px 0">
+    <span style="color:#1ad">A</span>/<span style="color:#1ad">D</span> yaw &nbsp; <span style="color:#1ad">W</span>/<span style="color:#1ad">S</span> pitch &nbsp; <span style="color:#1ad">Q</span>/<span style="color:#1ad">E</span> roll<br>
+    <span style="color:#1ad">I</span> fwd &nbsp; <span style="color:#1ad">K</span> brake &nbsp; <span style="color:#1ad">J</span>/<span style="color:#1ad">L</span> strafe &nbsp; <span style="color:#1ad">U</span>/<span style="color:#1ad">O</span> down/up<br>
+    <span style="color:#1ad">SPACE</span> pause
+  </div>
   <div class="ctrl" style="margin-top:4px">
     <button id="btn-bh" style="flex:1;padding:4px;background:#0a2030;color:#1ad;border:1px solid #1a4a6a;border-radius:4px;cursor:pointer;font-family:inherit;font-size:clamp(9px,1.1vw,13px);letter-spacing:1px">BH ON</button>
     <button id="btn-neb" style="flex:1;padding:4px;background:#0a2030;color:#1ad;border:1px solid #1a4a6a;border-radius:4px;cursor:pointer;font-family:inherit;font-size:clamp(9px,1.1vw,13px);letter-spacing:1px">NEB ON</button>
@@ -154,7 +163,7 @@ const hFps=document.getElementById('h-fps'),   hSpd=document.getElementById('h-s
 const sFog=document.getElementById('s-fog'), vFog=document.getElementById('v-fog');
 
 // ── Defaults & persistence ─────────────────────────────────────
-const DEFAULTS = { vel:45, stars:64, bright:25, fog:42, att:5, lag:50, bhrate:21, bhsize:80, bhOn:true, nebOn:true };
+const DEFAULTS = { vel:45, stars:64, bright:25, fog:42, att:5, lag:50, bhrate:21, bhsize:80, bhOn:true, nebOn:true, manual:false };
 const STORE_KEY = 'starfield_settings';
 
 function loadSettings() {
@@ -164,7 +173,7 @@ function saveSettings() {
   localStorage.setItem(STORE_KEY, JSON.stringify({
     vel:+sVel.value, stars:+sStars.value, bright:+sBright.value, fog:+sFog.value,
     att:+sAtt.value, lag:+sLag.value, bhrate:+sBHrate.value, bhsize:+sBHsize.value,
-    bhOn:bhEnabled, nebOn:nebEnabled
+    bhOn:bhEnabled, nebOn:nebEnabled, manual:manualMode
   }));
 }
 
@@ -197,8 +206,16 @@ let bhRate     = +sBHrate.value / 100;
 let bhSize     = +sBHsize.value / 100;
 let bhEnabled  = saved.bhOn  ?? DEFAULTS.bhOn;
 let nebEnabled = saved.nebOn ?? DEFAULTS.nebOn;
+let manualMode = saved.manual ?? DEFAULTS.manual;
 
-function setVelLabel(){ vVel.textContent=velocity.toLocaleString()+' u/s'; hSpd.textContent=velocity.toLocaleString(); }
+function setVelLabel(){
+  if (manualMode) {
+    vVel.textContent = Math.round(velocity).toLocaleString()+' u/s²';
+  } else {
+    vVel.textContent = velocity.toLocaleString()+' u/s';
+    hSpd.textContent = velocity.toLocaleString();
+  }
+}
 function setStarLabel(){ vStars.textContent=fmtN(N); hN.textContent=fmtN(N); }
 function setAttLabel(){ vAtt.textContent = Math.round(attScale*100)+'%'; }
 function setLagLabel(){ vLag.textContent = Math.round(lagScale*100)+'%'; }
@@ -222,6 +239,33 @@ sBHsize.addEventListener('input', ()=>{ bhSize=+sBHsize.value/100; setBHsizeLabe
 btnBH.addEventListener('click',   ()=>{ bhEnabled=!bhEnabled; updateBtnStyle(btnBH, bhEnabled); saveSettings(); });
 btnNeb.addEventListener('click',  ()=>{ nebEnabled=!nebEnabled; updateBtnStyle(btnNeb, nebEnabled); saveSettings(); });
 
+// ── Manual mode toggle ─────────────────────────────────────────
+const btnManual = document.getElementById('btn-manual');
+const lblVel    = document.getElementById('lbl-vel');
+const tipVel    = document.getElementById('tip-vel');
+const rowAtt    = document.getElementById('row-att');
+const keymap    = document.getElementById('keymap');
+
+function refreshModeUI() {
+  btnManual.textContent    = manualMode ? 'MANUAL' : 'AUTO';
+  btnManual.style.color    = manualMode ? '#8f5' : '#555';
+  btnManual.style.borderColor = manualMode ? '#3a6a1a' : '#333';
+  lblVel.textContent       = manualMode ? 'Accel' : 'Velocity';
+  tipVel.dataset.tip       = manualMode
+    ? 'Thrust applied by the I key, in units/s². Also scales the passive drag that continuously bleeds off speed (much weaker than thrust).'
+    : 'Flight speed through the starfield. Higher values cover more distance per second.';
+  rowAtt.style.opacity     = manualMode ? '0.35' : '1';
+  keymap.style.display     = manualMode ? 'block' : 'none';
+  setVelLabel();
+}
+
+btnManual.addEventListener('click', () => {
+  manualMode = !manualMode;
+  if (manualMode) enterManual(); else exitManual();
+  refreshModeUI();
+  saveSettings();
+});
+
 // Reset button
 document.getElementById('btn-reset').addEventListener('click', () => {
   sVel.value=DEFAULTS.vel; sStars.value=DEFAULTS.stars; sBright.value=DEFAULTS.bright;
@@ -231,10 +275,15 @@ document.getElementById('btn-reset').addEventListener('click', () => {
   fog=DEFAULTS.fog/100; attScale=DEFAULTS.att/100; lagScale=DEFAULTS.lag/100;
   brightness=DEFAULTS.bright/100; bhRate=DEFAULTS.bhrate/100; bhSize=DEFAULTS.bhsize/100;
   bhEnabled=DEFAULTS.bhOn; nebEnabled=DEFAULTS.nebOn;
+  if (manualMode !== DEFAULTS.manual) {
+    manualMode = DEFAULTS.manual;
+    if (manualMode) enterManual(); else exitManual();
+  }
   updateGrid();
   setVelLabel(); setStarLabel(); setBrightLabel(); setAttLabel(); setLagLabel();
   vFog.textContent=DEFAULTS.fog+'%'; setBHrateLabel(); setBHsizeLabel();
   updateBtnStyle(btnBH, bhEnabled); updateBtnStyle(btnNeb, nebEnabled);
+  refreshModeUI();
   saveSettings();
 });
 
@@ -244,6 +293,7 @@ vFog.textContent = sFog.value + '%';
 setAttLabel(); setLagLabel();
 setBrightLabel(); setBHrateLabel(); setBHsizeLabel();
 updateBtnStyle(btnBH, bhEnabled); updateBtnStyle(btnNeb, nebEnabled);
+refreshModeUI();
 
 // ── Scene constants ────────────────────────────────────────────
 const MAX_DIST = 4000.0;
@@ -431,6 +481,7 @@ void main(){
 const SKY_FS = `#version 300 es
 precision highp float;
 in vec3 vRayDir;
+uniform vec3 uSkyOff;   // parallax offset — shifts the sampled direction with camera motion
 out vec4 fragColor;
 
 float h31(vec3 p){
@@ -470,7 +521,9 @@ vec3 rotNoise(vec3 p){
 }
 
 void main(){
-  vec3 d = normalize(vRayDir);
+  // Perturb the sampled direction by the accumulated parallax offset so the
+  // whole sky drifts with camera translation (subtle far-field parallax).
+  vec3 d = normalize(normalize(vRayDir) + uSkyOff);
 
   // ── Distant galaxies (subtle smudges at various scales) ────────
   vec3 galCol = vec3(0.0);
@@ -559,6 +612,7 @@ const skyU = {
   fovTan:  gl.getUniformLocation(skyProg, 'uFovTan'),
   aspect:  gl.getUniformLocation(skyProg, 'uAspect'),
   invView: gl.getUniformLocation(skyProg, 'uInvView'),
+  skyOff:  gl.getUniformLocation(skyProg, 'uSkyOff'),
 };
 
 const quadBuf = gl.createBuffer();
@@ -942,8 +996,14 @@ canvas.addEventListener('wheel', e=>{
   velocity = logVal(+sVel.value, VEL_MIN, VEL_MAX); setVelLabel();
 }, { passive:false });
 let paused=false;
+const keys = Object.create(null);
+const FLY_KEYS = new Set(['KeyA','KeyD','KeyW','KeyS','KeyQ','KeyE','KeyI','KeyK','KeyJ','KeyL','KeyO','KeyU']);
 window.addEventListener('keydown', e=>{
-  if (e.code==='Space'){ e.preventDefault(); paused=!paused; }
+  if (e.code==='Space'){ e.preventDefault(); paused=!paused; return; }
+  if (manualMode && FLY_KEYS.has(e.code)){ e.preventDefault(); keys[e.code]=true; }
+});
+window.addEventListener('keyup', e=>{
+  if (FLY_KEYS.has(e.code)) keys[e.code]=false;
 });
 
 // ── Mat4 ───────────────────────────────────────────────────────
@@ -960,12 +1020,93 @@ function rY(a){ const c=Math.cos(a),s=Math.sin(a); return new Float32Array([c,0,
 function rX(a){ const c=Math.cos(a),s=Math.sin(a); return new Float32Array([1,0,0,0,0,c,s,0,0,-s,c,0,0,0,0,1]); }
 function rZ(a){ const c=Math.cos(a),s=Math.sin(a); return new Float32Array([c,s,0,0,-s,c,0,0,0,0,1,0,0,0,0,1]); }
 
+// ── SO(3) helpers for manual flight ────────────────────────────
+// Matrices are column-major: M[row][col] === m[col*4 + row].
+// Attitude/trajectory are stored as world→view rotation matrices, so a
+// body-frame rotation is applied by PRE-multiplying. This avoids the gimbal
+// lock and inverted controls that Euler angles hit past pitch ±90°.
+
+// Rodrigues: rotation vector (body frame) → 4x4 rotation matrix.
+function rotVecToMat(wx, wy, wz){
+  const th = Math.hypot(wx, wy, wz);
+  if (th < 1e-9) return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
+  const x=wx/th, y=wy/th, z=wz/th;
+  const c=Math.cos(th), s=Math.sin(th), t=1-c;
+  // Row-major R, then emit column-major
+  const r00=t*x*x+c,   r01=t*x*y-s*z, r02=t*x*z+s*y;
+  const r10=t*x*y+s*z, r11=t*y*y+c,   r12=t*y*z-s*x;
+  const r20=t*x*z-s*y, r21=t*y*z+s*x, r22=t*z*z+c;
+  return new Float32Array([r00,r10,r20,0,  r01,r11,r21,0,  r02,r12,r22,0,  0,0,0,1]);
+}
+
+// Inverse: rotation matrix → rotation vector (axis * angle).
+function matToRotVec(m){
+  const tr = m[0] + m[5] + m[10];
+  const cosA = Math.max(-1, Math.min(1, (tr - 1) * 0.5));
+  const a = Math.acos(cosA);
+  if (a < 1e-6) return { x:0, y:0, z:0 };
+  // skew part: (R[2][1]-R[1][2], R[0][2]-R[2][0], R[1][0]-R[0][1])
+  const sx = m[6]  - m[9];
+  const sy = m[8]  - m[2];
+  const sz = m[1]  - m[4];
+  if (a > Math.PI - 1e-4) {
+    // Near 180°: recover axis from the symmetric part.
+    const ax = Math.sqrt(Math.max(0, (m[0]  + 1) * 0.5));
+    const ay = Math.sqrt(Math.max(0, (m[5]  + 1) * 0.5));
+    const az = Math.sqrt(Math.max(0, (m[10] + 1) * 0.5));
+    return { x:a*(sx<0?-ax:ax), y:a*(sy<0?-ay:ay), z:a*(sz<0?-az:az) };
+  }
+  const k = a / (2 * Math.sin(a));
+  return { x:sx*k, y:sy*k, z:sz*k };
+}
+
+// Transpose the 3x3 part (== inverse for a rotation).
+function matT3(m){
+  return new Float32Array([m[0],m[4],m[8],0,  m[1],m[5],m[9],0,  m[2],m[6],m[10],0,  0,0,0,1]);
+}
+
+// Gram-Schmidt: undo float drift from repeated multiplication.
+function orthonormalize(m){
+  let c0x=m[0], c0y=m[1], c0z=m[2];
+  let l = Math.hypot(c0x,c0y,c0z) || 1; c0x/=l; c0y/=l; c0z/=l;
+  let c1x=m[4], c1y=m[5], c1z=m[6];
+  const d = c0x*c1x + c0y*c1y + c0z*c1z;
+  c1x-=d*c0x; c1y-=d*c0y; c1z-=d*c0z;
+  l = Math.hypot(c1x,c1y,c1z) || 1; c1x/=l; c1y/=l; c1z/=l;
+  const c2x = c0y*c1z - c0z*c1y, c2y = c0z*c1x - c0x*c1z, c2z = c0x*c1y - c0y*c1x;
+  m[0]=c0x; m[1]=c0y; m[2]=c0z;
+  m[4]=c1x; m[5]=c1y; m[6]=c1z;
+  m[8]=c2x; m[9]=c2y; m[10]=c2z;
+  m[3]=m[7]=m[11]=m[12]=m[13]=m[14]=0; m[15]=1;
+}
+
+function eulerToMat(p, y, r){ return mul(rZ(r), mul(rX(p), rY(y))); }
+
+// Decompose M = Rz(r)·Rx(p)·Ry(y) back into Euler angles.
+function matToEuler(m){
+  const sp = Math.max(-1, Math.min(1, m[6]));      // M[2][1]
+  return {
+    p: Math.asin(sp),
+    y: Math.atan2(-m[2], m[10]),                   // M[2][0], M[2][2]
+    r: Math.atan2(-m[4], m[5]),                    // M[0][1], M[1][1]
+  };
+}
+
 // ── Camera 3D position (JS doubles — infinite precision) ───────
 const camPos = {
   x: (Math.random() - 0.5) * 1e8,
   y: (Math.random() - 0.5) * 1e8,
   z: (Math.random() - 0.5) * 1e8
 };
+
+// Skybox parallax: a small direction offset that accumulates with camera
+// translation and slowly leaks back toward zero. Responds to motion (so the
+// far sky drifts with the stars) but stays bounded for long sessions, keeping
+// normalize(d + uSkyOff) well-conditioned.
+const skyOff = { x:0, y:0, z:0 };
+const SKY_PARALLAX = 1.0e-3;   // offset gained per unit of camera displacement
+const SKY_LEAK     = 0.25;     // per-second decay back toward centered
+const SKY_MAX      = 0.30;     // max offset magnitude (caps apparent sky shift)
 
 function forwardDir(pitch, yaw) {
   // Must match the -Z axis of rX(pitch) * rY(yaw) view matrix
@@ -1076,8 +1217,141 @@ function updateFlight(dt) {
   return 1.0 / (1.0 + turnMag * FLY.speedDrag);
 }
 
+// ── Manual flight ──────────────────────────────────────────────
+// The nose orientation is a body→world rotation matrix (attMat) — a matrix
+// instead of Euler angles so roll + full pitch never gimbal-lock.
+// Velocity is a true 3D world vector: thrust is applied along the nose
+// (the direction vector), and the Lag slider slews the velocity vector to
+// chase the nose direction.
+let attMat = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
+const attOmega = { x:0, y:0, z:0 };   // body-frame angular velocity of the nose
+const vel = { x:0, y:0, z:0 };        // world-space velocity vector (u/s)
+let slewOmega = 0;                    // angular rate of velocity chasing the nose
+
+const MANUAL = {
+  rotAccel: 2.2,    // angular accel while a rotation key is held (rad/s²) — gentle ramp
+  rotDamp:  1.8,    // angular-velocity exponential decay (per second) — eases spin in/out
+  maxRate:  2.0,    // clamp on angular velocity per axis (rad/s)
+  velDrag:  0.12,   // velocity exponential decay per second — natural floaty coast
+  brake:    2.0,    // extra decay per second while K is held — universal brake
+};
+
+// Nose forward = body -Z expressed in world (already unit; attMat is orthonormal).
+function noseForward() { return { x:-attMat[8], y:-attMat[9], z:-attMat[10] }; }
+
+function enterManual() {
+  // Seed orientation + velocity from the current auto state so nothing jumps.
+  attMat = matT3(eulerToMat(att.p, att.y, att.r));   // view→world = (world→view)ᵀ
+  attOmega.x=attOmega.y=attOmega.z=0;
+  const d = forwardDir(trj.p, trj.y);
+  const s = Math.max(0, lastAutoSpeed);
+  vel.x = d.x*s; vel.y = d.y*s; vel.z = d.z*s;
+  slewOmega = 0;
+  for (const k in keys) keys[k]=false;
+}
+
+function exitManual() {
+  // Fold orientation + heading back into Euler so auto flight resumes smoothly.
+  const ae = matToEuler(matT3(attMat));
+  att.p=ae.p; att.y=ae.y; att.r=ae.r; attV.p=attV.y=attV.r=0;
+  const sp = Math.hypot(vel.x, vel.y, vel.z);
+  if (sp > 1e-6) {
+    const vx=vel.x/sp, vy=vel.y/sp, vz=vel.z/sp;
+    trj.p = Math.asin(Math.max(-1, Math.min(1, -vy)));   // invert forwardDir
+    trj.y = Math.atan2(vx, -vz);
+  } else {
+    trj.p = ae.p; trj.y = ae.y;
+  }
+  trj.r = ae.r; trjV.p=trjV.y=trjV.r=0;
+}
+
+function updateManual(dt) {
+  // ── Rotation: keys apply angular acceleration in the ship's body frame ──
+  // Pitch = X axis, Yaw = Y axis, Roll = Z axis.
+  let ax=0, ay=0, az=0;
+  if (keys['KeyW']) ax -= MANUAL.rotAccel;   // pitch down
+  if (keys['KeyS']) ax += MANUAL.rotAccel;   // pitch up
+  if (keys['KeyD']) ay -= MANUAL.rotAccel;   // yaw right
+  if (keys['KeyA']) ay += MANUAL.rotAccel;   // yaw left
+  if (keys['KeyE']) az -= MANUAL.rotAccel;   // roll right
+  if (keys['KeyQ']) az += MANUAL.rotAccel;   // roll left
+
+  attOmega.x += ax * dt;
+  attOmega.y += ay * dt;
+  attOmega.z += az * dt;
+
+  // Decay all three axes agnostically → quickly stops rotating when released.
+  const decay = Math.exp(-MANUAL.rotDamp * dt);
+  attOmega.x *= decay; attOmega.y *= decay; attOmega.z *= decay;
+
+  const mr = MANUAL.maxRate;
+  attOmega.x = Math.max(-mr, Math.min(mr, attOmega.x));
+  attOmega.y = Math.max(-mr, Math.min(mr, attOmega.y));
+  attOmega.z = Math.max(-mr, Math.min(mr, attOmega.z));
+
+  // Integrate the nose orientation (body-frame → post-multiply).
+  attMat = mul(attMat, rotVecToMat(attOmega.x*dt, attOmega.y*dt, attOmega.z*dt));
+  orthonormalize(attMat);
+
+  // ── Thrust: applied along the ship's body axes, not the velocity ──
+  const D = noseForward();                                 // body -Z (forward)
+  const R = { x:attMat[0], y:attMat[1], z:attMat[2] };     // body +X (right)
+  const Uax = { x:attMat[4], y:attMat[5], z:attMat[6] };   // body +Y (up)
+  const accel = velocity;   // slider value, reinterpreted as u/s²
+  const push = (v, s) => { vel.x += v.x*s; vel.y += v.y*s; vel.z += v.z*s; };
+  const a = accel * dt;
+  if (keys['KeyI']) push(D,  a);   // forward
+  if (keys['KeyL']) push(R,  a);   // strafe right
+  if (keys['KeyJ']) push(R, -a);   // strafe left
+  if (keys['KeyO']) push(Uax,  a); // up
+  if (keys['KeyU']) push(Uax, -a); // down
+
+  // ── Drag + brake: exponential decay → natural, floaty coast ──
+  // Drag ∝ current speed, so thrust eases toward a terminal and coasting
+  // bleeds off smoothly. Holding K adds a stronger decay = universal brake
+  // that slows the velocity vector toward zero regardless of heading.
+  const dragRate = MANUAL.velDrag + (keys['KeyK'] ? MANUAL.brake : 0);
+  const drag = Math.exp(-dragRate * dt);
+  vel.x *= drag; vel.y *= drag; vel.z *= drag;
+  let sp = Math.hypot(vel.x, vel.y, vel.z);
+
+  // ── Lag: velocity vector chases the nose direction (spring-damper) ──
+  if (sp > 1e-6) {
+    if (lagScale < 0.05) {
+      // Snap heading to the nose, preserve speed.
+      vel.x = D.x*sp; vel.y = D.y*sp; vel.z = D.z*sp;
+      slewOmega = 0;
+    } else {
+      const vx=vel.x/sp, vy=vel.y/sp, vz=vel.z/sp;
+      // Angular error between current heading and nose.
+      let cx = vy*D.z - vz*D.y, cy = vz*D.x - vx*D.z, cz = vx*D.y - vy*D.x;
+      const s = Math.hypot(cx, cy, cz);
+      const c = Math.max(-1, Math.min(1, vx*D.x + vy*D.y + vz*D.z));
+      const ang = Math.atan2(s, c);
+      const curSpring = 0.25 / (lagScale * lagScale);
+      const critDamp  = 2.0 * Math.sqrt(curSpring);
+      const curDamp   = critDamp * (1.0 - lagScale * 0.65);
+      slewOmega += (curSpring*ang - curDamp*slewOmega) * dt;
+      if (s > 1e-9) {
+        const dA = Math.max(-ang, Math.min(ang, slewOmega*dt)); // don't overshoot the target
+        // Rotate heading toward nose about the error axis by dA (Rodrigues).
+        const ux=cx/s, uy=cy/s, uz=cz/s, ca=Math.cos(dA), sa=Math.sin(dA);
+        const dot = ux*vx + uy*vy + uz*vz;
+        const nx = vx*ca + (uy*vz - uz*vy)*sa + ux*dot*(1-ca);
+        const ny = vy*ca + (uz*vx - ux*vz)*sa + uy*dot*(1-ca);
+        const nz = vz*ca + (ux*vy - uy*vx)*sa + uz*dot*(1-ca);
+        vel.x = nx*sp; vel.y = ny*sp; vel.z = nz*sp;
+      }
+    }
+  }
+}
+
 // ── Pre-warm flight so attitude starts settled ────────────────
+let lastAutoSpeed = 0;
 for (let i = 0; i < 300; i++) updateFlight(1/60);
+
+// If manual mode was restored from a previous session, seed it now.
+if (manualMode) enterManual();
 
 // ── Render loop ────────────────────────────────────────────────
 function frame(ts){
@@ -1093,22 +1367,41 @@ function frame(ts){
   const dt = Math.min((ts-lastT)/1000, 0.05); lastT=ts;
 
   // ── Flight or manual camera ────────────────────────────────────
-  let speedMult = 1.0;
   let viewMat;
+  let fwd, spd;
 
-  if (!paused) speedMult = updateFlight(dt);
-  // View follows attitude (where the nose points)
-  // Movement follows trajectory (which lags behind — causing the slide)
-  viewMat = mul(rZ(att.r), mul(rX(att.p), rY(att.y)));
+  if (manualMode) {
+    if (!paused) updateManual(dt);
+    // View follows the nose; movement follows the velocity vector directly.
+    viewMat = matT3(attMat);
+    fwd = { x:vel.x, y:vel.y, z:vel.z };
+    spd = 1.0;
+    hSpd.textContent = Math.round(Math.hypot(vel.x, vel.y, vel.z)).toLocaleString();
+  } else {
+    const speedMult = paused ? 1.0 : updateFlight(dt);
+    lastAutoSpeed = velocity * speedMult;
+    // View follows attitude (where the nose points)
+    // Movement follows trajectory (which lags behind — causing the slide)
+    viewMat = mul(rZ(att.r), mul(rX(att.p), rY(att.y)));
+    fwd = forwardDir(trj.p, trj.y);
+    spd = velocity * speedMult;
+  }
 
   // Move camera through 3D space along its forward direction
   if (!paused) {
-    const fwd = forwardDir(trj.p, trj.y);
-    const spd = velocity * speedMult;
-    camPos.x += fwd.x * spd * dt;
-    camPos.y += fwd.y * spd * dt;
-    camPos.z += fwd.z * spd * dt;
+    const mx = fwd.x * spd * dt, my = fwd.y * spd * dt, mz = fwd.z * spd * dt;
+    camPos.x += mx; camPos.y += my; camPos.z += mz;
+    // Feed the actual displacement into the skybox parallax offset.
+    skyOff.x += mx * SKY_PARALLAX;
+    skyOff.y += my * SKY_PARALLAX;
+    skyOff.z += mz * SKY_PARALLAX;
   }
+  // Slow leak keeps the offset bounded (imperceptible over a strafe, prevents drift).
+  const skyLeak = Math.exp(-SKY_LEAK * dt);
+  skyOff.x *= skyLeak; skyOff.y *= skyLeak; skyOff.z *= skyLeak;
+  // Hard cap so fast flight can't push normalize(d + skyOff) toward collapse.
+  const soMag = Math.hypot(skyOff.x, skyOff.y, skyOff.z);
+  if (soMag > SKY_MAX) { const s = SKY_MAX / soMag; skyOff.x*=s; skyOff.y*=s; skyOff.z*=s; }
 
   // Split position into integer cell + fractional offset (precision-safe)
   const cx = Math.floor(camPos.x / cellSize);
@@ -1135,6 +1428,7 @@ function frame(ts){
   gl.uniform1f(skyU.fovTan, Math.tan(80 * Math.PI / 360));
   gl.uniform1f(skyU.aspect, asp);
   gl.uniformMatrix4fv(skyU.invView, false, transpose4(viewMat));
+  gl.uniform3f(skyU.skyOff, skyOff.x, skyOff.y, skyOff.z);
   gl.bindVertexArray(quadVAO);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
