@@ -1022,7 +1022,7 @@ function findBlackHoles(vpMat) {
     const sx = clipx/clipw*0.5+0.5, sy = clipy/clipw*0.5+0.5;
     // Smooth fade-in: effect ramps from 0 at MAX_DIST*2 to full at MAX_DIST*1.2
     const fadeIn = Math.min(1, Math.max(0, (MAX_DIST * 2.0 - dist) / (MAX_DIST * 0.8)));
-    const screenRe = worldR / dist * BH_PROJ_SCALE * fadeIn;
+    const screenRe = worldR / dist * BH_PROJ_SCALE * fadeIn * 0.5;   // original lensing size (halved)
     // Generous bounds — collect ALL, sort later
     if (screenRe > 0.0001 && Math.abs(sx-0.5) < screenRe*12.0+2.0 && Math.abs(sy-0.5) < screenRe*12.0+2.0) {
       bhs.push({ sx, sy, re: screenRe, dist, wx, wy, wz, rx, ry, rz, worldR, fadeIn });
