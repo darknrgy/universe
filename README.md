@@ -19,16 +19,16 @@ This is a single-page static site. Serve it with any HTTP server:
 
 ```bash
 # Python
-python3 -m http.server 8000
+python3 -m http.server 5500
 
 # Node.js (npx, no install)
 npx serve .
 
 # PHP
-php -S localhost:8000
+php -S localhost:5500
 ```
 
-Then open `http://localhost:8000` in a browser that supports WebGL2.
+Then open `http://localhost:5500` in a browser that supports WebGL2.
 
 `index.html` redirects to `starfield.html`, which contains the entire application.
 
