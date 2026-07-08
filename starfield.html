@@ -85,7 +85,6 @@ input[type=range]::-webkit-slider-thumb {
   <div class="ctrl" id="row-att"><label>Attitude</label><input type="range" id="s-att" min="0" max="100" value="5"><span class="val" id="v-att">—</span><button class="info-btn" data-tip="How aggressively the camera pitches, yaws, and rolls during flight. Low = gentle drift, high = wild tumbling. Ignored in manual mode.">i</button></div>
   <div class="ctrl"><label>Lag</label><input type="range" id="s-lag" min="0" max="100" value="50"><span class="val" id="v-lag">—</span><button class="info-btn" data-tip="How loosely the flight trajectory follows the camera heading. Low = tight coupling, high = floaty and indirect.">i</button></div>
   <div class="ctrl"><label>BH Rate</label><input type="range" id="s-bhrate" min="0" max="100" value="21"><span class="val" id="v-bhrate">—</span><button class="info-btn" data-tip="How frequently black holes appear in space. Higher values mean more black holes per region.">i</button></div>
-  <div class="ctrl"><label>BH Size</label><input type="range" id="s-bhsize" min="0" max="100" value="80"><span class="val" id="v-bhsize">—</span><button class="info-btn" data-tip="Einstein radius of black holes, controlling how large their gravitational lensing effect appears.">i</button></div>
   <div class="ctrl" style="margin-top:4px">
     <button id="btn-manual" style="flex:1;padding:4px;background:#0a2030;color:#555;border:1px solid #333;border-radius:4px;cursor:pointer;font-family:inherit;font-size:clamp(9px,1.1vw,13px);letter-spacing:1px">AUTO</button>
     <button class="info-btn" data-tip="Switch between automatic flight and manual piloting. Manual: A/D yaw, W/S pitch, Q/E roll, I forward, K brake, J/L strafe left/right, U/O down/up. Speed continuously bleeds off at a low rate.">i</button>
@@ -163,7 +162,7 @@ const hFps=document.getElementById('h-fps'),   hSpd=document.getElementById('h-s
 const sFog=document.getElementById('s-fog'), vFog=document.getElementById('v-fog');
 
 // ── Defaults & persistence ─────────────────────────────────────
-const DEFAULTS = { vel:45, stars:64, bright:25, fog:42, att:5, lag:50, bhrate:21, bhsize:80, bhOn:true, nebOn:true, manual:false };
+const DEFAULTS = { vel:45, stars:64, bright:25, fog:42, att:5, lag:50, bhrate:21, bhOn:true, nebOn:true, manual:false };
 const STORE_KEY = 'starfield_settings';
 
 function loadSettings() {
@@ -172,7 +171,7 @@ function loadSettings() {
 function saveSettings() {
   localStorage.setItem(STORE_KEY, JSON.stringify({
     vel:+sVel.value, stars:+sStars.value, bright:+sBright.value, fog:+sFog.value,
-    att:+sAtt.value, lag:+sLag.value, bhrate:+sBHrate.value, bhsize:+sBHsize.value,
+    att:+sAtt.value, lag:+sLag.value, bhrate:+sBHrate.value,
     bhOn:bhEnabled, nebOn:nebEnabled, manual:manualMode
   }));
 }
@@ -181,7 +180,6 @@ const sAtt=document.getElementById('s-att'), vAtt=document.getElementById('v-att
 const sLag=document.getElementById('s-lag'), vLag=document.getElementById('v-lag');
 const sBright=document.getElementById('s-bright'), vBright=document.getElementById('v-bright');
 const sBHrate=document.getElementById('s-bhrate'), vBHrate=document.getElementById('v-bhrate');
-const sBHsize=document.getElementById('s-bhsize'), vBHsize=document.getElementById('v-bhsize');
 const btnBH = document.getElementById('btn-bh');
 const btnNeb = document.getElementById('btn-neb');
 
@@ -194,7 +192,6 @@ sFog.value    = saved.fog    ?? DEFAULTS.fog;
 sAtt.value    = saved.att    ?? DEFAULTS.att;
 sLag.value    = saved.lag    ?? DEFAULTS.lag;
 sBHrate.value = saved.bhrate ?? DEFAULTS.bhrate;
-sBHsize.value = saved.bhsize ?? DEFAULTS.bhsize;
 
 let velocity   = logVal(+sVel.value, VEL_MIN, VEL_MAX);
 let N          = logVal(+sStars.value, STR_MIN, STR_MAX);
@@ -203,7 +200,7 @@ let attScale   = +sAtt.value / 100;
 let lagScale   = +sLag.value / 100;
 let brightness = +sBright.value / 100;
 let bhRate     = +sBHrate.value / 100;
-let bhSize     = +sBHsize.value / 100;
+const bhSize   = 0.15;   // locked (BH Size slider removed)
 let bhEnabled  = saved.bhOn  ?? DEFAULTS.bhOn;
 let nebEnabled = saved.nebOn ?? DEFAULTS.nebOn;
 let manualMode = saved.manual ?? DEFAULTS.manual;
@@ -221,7 +218,6 @@ function setAttLabel(){ vAtt.textContent = Math.round(attScale*100)+'%'; }
 function setLagLabel(){ vLag.textContent = Math.round(lagScale*100)+'%'; }
 function setBrightLabel(){ vBright.textContent = Math.round(brightness*100)+'%'; }
 function setBHrateLabel(){ vBHrate.textContent = bhRate<=0?'Off':Math.round(bhRate*100)+'%'; }
-function setBHsizeLabel(){ vBHsize.textContent = Math.round(bhSize*100)+'%'; }
 function updateBtnStyle(btn, on) {
   btn.textContent = btn === btnBH ? (on ? 'BH ON' : 'BH OFF') : (on ? 'NEB ON' : 'NEB OFF');
   btn.style.color = on ? '#1ad' : '#555';
@@ -235,7 +231,6 @@ sAtt.addEventListener('input',    ()=>{ attScale=+sAtt.value/100; setAttLabel();
 sLag.addEventListener('input',    ()=>{ lagScale=+sLag.value/100; setLagLabel(); saveSettings(); });
 sBright.addEventListener('input', ()=>{ brightness=+sBright.value/100; setBrightLabel(); saveSettings(); });
 sBHrate.addEventListener('input', ()=>{ bhRate=+sBHrate.value/100; setBHrateLabel(); saveSettings(); });
-sBHsize.addEventListener('input', ()=>{ bhSize=+sBHsize.value/100; setBHsizeLabel(); saveSettings(); });
 btnBH.addEventListener('click',   ()=>{ bhEnabled=!bhEnabled; updateBtnStyle(btnBH, bhEnabled); saveSettings(); });
 btnNeb.addEventListener('click',  ()=>{ nebEnabled=!nebEnabled; updateBtnStyle(btnNeb, nebEnabled); saveSettings(); });
 
@@ -270,10 +265,10 @@ btnManual.addEventListener('click', () => {
 document.getElementById('btn-reset').addEventListener('click', () => {
   sVel.value=DEFAULTS.vel; sStars.value=DEFAULTS.stars; sBright.value=DEFAULTS.bright;
   sFog.value=DEFAULTS.fog; sAtt.value=DEFAULTS.att; sLag.value=DEFAULTS.lag;
-  sBHrate.value=DEFAULTS.bhrate; sBHsize.value=DEFAULTS.bhsize;
+  sBHrate.value=DEFAULTS.bhrate;
   velocity=logVal(DEFAULTS.vel, VEL_MIN, VEL_MAX); N=logVal(DEFAULTS.stars, STR_MIN, STR_MAX);
   fog=DEFAULTS.fog/100; attScale=DEFAULTS.att/100; lagScale=DEFAULTS.lag/100;
-  brightness=DEFAULTS.bright/100; bhRate=DEFAULTS.bhrate/100; bhSize=DEFAULTS.bhsize/100;
+  brightness=DEFAULTS.bright/100; bhRate=DEFAULTS.bhrate/100;
   bhEnabled=DEFAULTS.bhOn; nebEnabled=DEFAULTS.nebOn;
   if (manualMode !== DEFAULTS.manual) {
     manualMode = DEFAULTS.manual;
@@ -281,7 +276,7 @@ document.getElementById('btn-reset').addEventListener('click', () => {
   }
   updateGrid();
   setVelLabel(); setStarLabel(); setBrightLabel(); setAttLabel(); setLagLabel();
-  vFog.textContent=DEFAULTS.fog+'%'; setBHrateLabel(); setBHsizeLabel();
+  vFog.textContent=DEFAULTS.fog+'%'; setBHrateLabel();
   updateBtnStyle(btnBH, bhEnabled); updateBtnStyle(btnNeb, nebEnabled);
   refreshModeUI();
   saveSettings();
@@ -291,7 +286,7 @@ document.getElementById('btn-reset').addEventListener('click', () => {
 setVelLabel(); setStarLabel();
 vFog.textContent = sFog.value + '%';
 setAttLabel(); setLagLabel();
-setBrightLabel(); setBHrateLabel(); setBHsizeLabel();
+setBrightLabel(); setBHrateLabel();
 updateBtnStyle(btnBH, bhEnabled); updateBtnStyle(btnNeb, nebEnabled);
 refreshModeUI();
 
@@ -650,6 +645,17 @@ uniform int   uNumBH;
 uniform vec2  uBHpos[16];
 uniform float uBHre[16];
 
+// Hero black hole — cinematic raymarched, lensed accretion disk (nearest BH)
+uniform int   uHeroActive;
+uniform vec3  uHeroPos;      // camera-relative BH center (world units)
+uniform float uHeroRs;       // Schwarzschild radius (world units)
+uniform vec3  uHeroN;        // accretion-disk plane normal (unit)
+uniform vec2  uHeroScreen;   // BH screen position
+uniform float uHeroDiskR;    // projected accretion-disk radius (screen units)
+uniform float uHeroFade;     // fade-in near the detection boundary (0..1) — prevents pop-in
+uniform float uTime;         // seconds, for disk rotation
+uniform float uDiskOmega;    // disk rotation speed scale
+
 // Nebulae
 uniform int   uNumNeb;
 uniform vec3  uNebPos[6];    // camera-relative world position
@@ -682,6 +688,90 @@ float nfbm(vec3 p){
   float v=0.0, a=0.5;
   for(int i=0;i<4;i++){ v+=a*nvn3(p); p*=2.2; a*=0.45; }
   return v;
+}
+
+// ── Cinematic black hole ───────────────────────────────────────
+// Everything below works in units of the Schwarzschild radius (Rs = 1);
+// space is scaled by uHeroRs before marching. Light bending uses the exact
+// Schwarzschild null-geodesic form in Cartesian coordinates:
+//   d²x/dλ² = -1.5 · h² · x / |x|⁵   with  h = |x × v|  (conserved)
+// which yields the photon sphere and the over/under disk wrapping for free.
+const float DISK_IN  = 3.0;    // inner edge (ISCO) in Rs
+const float DISK_OUT = 11.0;   // outer edge in Rs
+const float GLOW_K   = 45000.0; // unresolved-disk glow brightness scale
+
+vec3 diskColor(float rr){
+  // Blackbody-ish gradient: hot blue-white inner → orange → deep red outer.
+  float t = clamp((rr - DISK_IN) / (DISK_OUT - DISK_IN), 0.0, 1.0);
+  vec3 hot  = vec3(0.75, 0.86, 1.00);
+  vec3 mid  = vec3(1.00, 0.78, 0.46);
+  vec3 cool = vec3(1.00, 0.34, 0.10);
+  return t < 0.5 ? mix(hot, mid, t*2.0) : mix(mid, cool, (t-0.5)*2.0);
+}
+
+// Returns rgb = accumulated disk emission, a = remaining background transmittance
+// (0 = ray captured by the horizon → pure shadow).
+vec4 raymarchDisk(vec3 P, vec3 v){
+  vec3 n  = normalize(uHeroN);
+  vec3 t1 = normalize(abs(n.y) < 0.9 ? cross(n, vec3(0.0,1.0,0.0)) : cross(n, vec3(1.0,0.0,0.0)));
+  vec3 t2 = cross(n, t1);
+
+  vec3  hvec = cross(P, v);
+  float h2   = dot(hvec, hvec);           // conserved angular momentum²
+
+  vec3  acc = vec3(0.0);
+  float transmit = 1.0;
+  float prevSide = dot(P, n);
+
+  for(int i=0; i<200; i++){
+    float r2 = dot(P, P);
+    float r  = sqrt(r2);
+    if(r < 1.0){ transmit = 0.0; break; }           // event horizon → captured
+    if(r > 45.0 && dot(P, v) > 0.0) break;           // escaped to infinity
+
+    float dL = max(r * 0.15, 0.02);                  // geometric: reaches the disk from any distance
+    vec3  Pn = P + v * dL;
+
+    // Accretion-disk plane crossing between P and Pn.
+    float side = dot(Pn, n);
+    if(side * prevSide < 0.0){
+      float tt = prevSide / (prevSide - side);
+      vec3  X  = P + v * dL * tt;
+      float rr = length(X - n * dot(X, n));          // radius within the disk plane
+      if(rr > DISK_IN && rr < DISK_OUT){
+        // Keplerian differential rotation advects the texture (inner spins faster).
+        float cx = dot(X, t1), cy = dot(X, t2);
+        float omega = uDiskOmega * pow(rr, -1.5);
+        float ca = cos(-omega * uTime), sa = sin(-omega * uTime);
+        vec2  rot = vec2(cx*ca - cy*sa, cx*sa + cy*ca);
+        // Turbulent density (seam-free: sampled from rotated Cartesian coords).
+        float dens = nfbm(vec3(rot * 0.55, rr*0.35) + vec3(0.0, 0.0, uTime*0.02));
+        dens = smoothstep(0.30, 0.85, dens);
+        // Radial brightness: bright inner edge, soft outer falloff.
+        float radial = pow(clamp((DISK_OUT - rr) / (DISK_OUT - DISK_IN), 0.0, 1.0), 1.5);
+        radial *= smoothstep(DISK_IN, DISK_IN + 0.5, rr);
+        // Relativistic Doppler beaming: approaching side brighter & bluer.
+        vec3  orbit = normalize(cross(n, X));          // tangential velocity direction
+        float beta  = sqrt(0.5 / rr);                  // v/c, Keplerian (Rs = 1)
+        float mu    = dot(orbit, normalize(-v));
+        float dopp  = 1.0 / max(1.0 - beta*mu, 0.05);
+        float beam  = pow(dopp, 3.0);
+        vec3  base  = diskColor(rr) * mix(vec3(1.0), vec3(0.55,0.70,1.35), clamp(dopp-1.0, 0.0, 1.0));
+        float emit    = dens * radial * beam;
+        float opacity = clamp(dens * radial * 1.4, 0.0, 1.0);
+        acc      += transmit * base * emit * 1.7;
+        transmit *= (1.0 - opacity);
+      }
+    }
+    prevSide = side;
+
+    // Gravitational deflection then advance.
+    P = Pn;
+    v += (-1.5 * h2 * P / pow(dot(P,P), 2.5)) * dL;
+
+    if(transmit < 0.02) break;
+  }
+  return vec4(acc, transmit);
 }
 
 void main(){
@@ -717,6 +807,33 @@ void main(){
     shadow = min(shadow, smoothstep(uBHre[i]*0.1, uBHre[i]*0.4, r2));
   }
   col.rgb *= shadow;
+
+  // ── Hero black hole: cinematic lensed accretion disk ─────────
+  // Apparent size is pure perspective: a sub-pixel glow ("dim star") far away
+  // that resolves seamlessly into the raymarched disk as you approach.
+  if(uHeroActive == 1){
+    vec2  hd = vec2((vUV.x - uHeroScreen.x) * uAspect, vUV.y - uHeroScreen.y);
+    float pr = length(hd);
+    float dR = uHeroDiskR;                            // projected disk radius (screen)
+    float res = smoothstep(0.0015, 0.007, dR);        // 0 = unresolved point, 1 = resolved disk
+
+    // Resolved regime — raymarch the lensed disk (skip when it's sub-pixel).
+    float gateR = dR * 3.0 + 0.002;                   // lensing enlarges the disk; cover it generously
+    float gate  = 1.0 - smoothstep(gateR * 0.85, gateR, pr);
+    if(res > 0.001 && gate > 0.001){
+      vec2 ndc = vUV * 2.0 - 1.0;
+      vec3 camRay = vec3(ndc.x * uAspect * uFovTan, ndc.y * uFovTan, -1.0);
+      vec3 wr = normalize((uInvView * vec4(camRay, 0.0)).xyz);
+      vec4 dm = raymarchDisk(-uHeroPos / uHeroRs, wr);
+      vec3 heroCol = dm.rgb + dm.a * col.rgb;
+      col.rgb = mix(col.rgb, heroCol, res * gate * uHeroFade);
+    }
+
+    // Unresolved regime — additive glow standing in for the far, point-like disk.
+    float gw   = max(dR * 1.5, 0.0018);               // glow radius ~disk size, min ~2px
+    float glow = exp(-(pr*pr) / (gw*gw));
+    col.rgb += vec3(1.0, 0.85, 0.65) * glow * (GLOW_K * dR * dR) * (1.0 - res) * uHeroFade;
+  }
 
   // ── Nebulae (volumetric 3D noise clouds) ─────────────────────
   if(uNumNeb > 0){
@@ -788,6 +905,15 @@ const lensU = {
   invView: gl.getUniformLocation(lensProg,'uInvView'),
   numBH:   gl.getUniformLocation(lensProg,'uNumBH'),
   bhPos: [], bhRe: [],
+  heroActive:  gl.getUniformLocation(lensProg,'uHeroActive'),
+  heroPos:     gl.getUniformLocation(lensProg,'uHeroPos'),
+  heroRs:      gl.getUniformLocation(lensProg,'uHeroRs'),
+  heroN:       gl.getUniformLocation(lensProg,'uHeroN'),
+  heroScreen:  gl.getUniformLocation(lensProg,'uHeroScreen'),
+  heroDiskR:   gl.getUniformLocation(lensProg,'uHeroDiskR'),
+  heroFade:    gl.getUniformLocation(lensProg,'uHeroFade'),
+  time:        gl.getUniformLocation(lensProg,'uTime'),
+  diskOmega:   gl.getUniformLocation(lensProg,'uDiskOmega'),
   numNeb:  gl.getUniformLocation(lensProg,'uNumNeb'),
   fog:     gl.getUniformLocation(lensProg,'uFog'),
   nebPos: [], nebRadius: [], nebColor: [], nebSeed: [],
@@ -830,6 +956,20 @@ buildSceneFBO();
 // Each frame, scan nearby cells and project visible BHs for lensing.
 const BH_CELL = 500;   // coarse grid cell size
 const BH_SCAN = 16;    // scan ±16 cells = ±8000 units
+
+// Cinematic "hero" accretion disk (applied to the nearest BH; scales by perspective)
+const HERO_RS_FRAC = 0.028;  // Schwarzschild radius as a fraction of the BH's world radius
+const DISK_OUT_RS  = 11.0;   // disk outer radius in Rs (must match shader DISK_OUT)
+const DISK_OMEGA   = 2.2;    // disk rotation speed scale
+
+// Deterministic accretion-disk plane normal for a BH cell (stable per BH).
+function bhDiskNormal(wx, wy, wz) {
+  const s = ihashJS(Math.imul(wx, 0x1f1f1f1f) ^ Math.imul(wy, 0x2c9277b5) ^ Math.imul(wz, 0x165667b1));
+  const z  = rndJS(ihashJS((s + 1) | 0)) * 2 - 1;
+  const ph = rndJS(ihashJS((s + 2) | 0)) * Math.PI * 2;
+  const r  = Math.sqrt(Math.max(0, 1 - z*z));
+  return [r * Math.cos(ph), r * Math.sin(ph), z];
+}
 
 // Must exactly match GPU ihash: unsigned shifts (>>>), Math.imul, shift counts 16/15/16
 function ihashJS(x) {
@@ -889,7 +1029,7 @@ function findBlackHoles(vpMat) {
     const screenRe = worldR / dist * BH_PROJ_SCALE * fadeIn;
     // Generous bounds — collect ALL, sort later
     if (screenRe > 0.0001 && Math.abs(sx-0.5) < screenRe*12.0+2.0 && Math.abs(sy-0.5) < screenRe*12.0+2.0) {
-      bhs.push({ sx, sy, re: screenRe, dist, wx, wy, wz });
+      bhs.push({ sx, sy, re: screenRe, dist, wx, wy, wz, rx, ry, rz, worldR, fadeIn });
     }
   }
   // Keep closest 16 — prevents distant BHs from evicting nearby ones
@@ -1470,6 +1610,28 @@ function frame(ts){
     for (let i = 0; i < bhs.length; i++) {
       gl.uniform2f(lensU.bhPos[i], bhs[i].sx, bhs[i].sy);
       gl.uniform1f(lensU.bhRe[i],  bhs[i].re);
+    }
+
+    // Hero BH — nearest one gets the cinematic lensed accretion disk.
+    // Its projected size scales purely by perspective (point when far, resolved when close).
+    let hero = null;
+    if (bhs.length) {
+      const b = bhs[0];
+      const Rs = b.worldR * HERO_RS_FRAC;
+      const diskScreenR = (DISK_OUT_RS * Rs) / b.dist * BH_PROJ_SCALE;
+      const n = bhDiskNormal(b.wx, b.wy, b.wz);
+      hero = { b, Rs, n, diskScreenR };
+    }
+    gl.uniform1i(lensU.heroActive, hero ? 1 : 0);
+    if (hero) {
+      gl.uniform3f(lensU.heroPos,    hero.b.rx, hero.b.ry, hero.b.rz);
+      gl.uniform1f(lensU.heroRs,     hero.Rs);
+      gl.uniform3f(lensU.heroN,      hero.n[0], hero.n[1], hero.n[2]);
+      gl.uniform2f(lensU.heroScreen, hero.b.sx, hero.b.sy);
+      gl.uniform1f(lensU.heroDiskR,  hero.diskScreenR);
+      gl.uniform1f(lensU.heroFade,   hero.b.fadeIn);
+      gl.uniform1f(lensU.time,       ts * 0.001);
+      gl.uniform1f(lensU.diskOmega,  DISK_OMEGA);
     }
 
     // Nebulae
